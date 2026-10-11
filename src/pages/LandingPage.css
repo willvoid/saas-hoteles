@@ -1,0 +1,629 @@
+/* src/pages/LandingPage.css */
+
+.landing-page {
+  width: 100%;
+  /* `html`/`#root` (index.css) bloquean el scroll de la página a propósito,
+     porque el panel admin maneja su scroll dentro de `.dashboard-content`.
+     El landing necesita el mismo patrón: sin su propio `overflow-y: auto`,
+     cualquier contenido más alto que el viewport (típico en mobile, donde
+     el texto del hero y el wizard se apilan) queda cortado sin forma de
+     llegar a él con scroll. */
+  height: 100vh;
+  overflow-y: auto;
+  /* Los orbes decorativos (`.landing-bg-orb-1/2`, abajo) se posicionan a
+     propósito por fuera del borde para el efecto de resplandor. Al fijar
+     sólo `overflow-y`, la spec de CSS computa `overflow-x` como `auto`
+     también (no puede quedar en `visible` si el otro eje no lo está),
+     dejando ese sangrado como scroll horizontal real. Se fuerza `hidden`
+     explícito para volver a recortarlo sin tocar `overflow-y`. */
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg-gradient-start);
+  position: relative;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Background animated orbs (shared from index.css or new ones) */
+.landing-bg-orb-1,
+.landing-bg-orb-2 {
+  /* `fixed` y no `absolute`: como hijos absolutos de `.landing-page` (que es
+     el contenedor con scroll) su sangrado intencional fuera del borde se
+     sumaba al area scrolleable, generando scroll fantasma — 80px verticales
+     de puro resplandor decorativo, sin contenido reachable. Al sacarlos del
+     flujo con `fixed` dejan de aportar scroll y ademas el glow queda quieto
+     de fondo. Ya son `pointer-events: none`, asi que no interceptan clicks. */
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(120px);
+  z-index: 0;
+  animation: float 25s infinite alternate ease-in-out;
+  pointer-events: none;
+}
+
+.landing-bg-orb-1 {
+  width: 60vw;
+  height: 60vw;
+  background: rgba(59, 130, 246, 0.18);
+  top: -20%;
+  left: -20%;
+}
+
+.landing-bg-orb-2 {
+  width: 50vw;
+  height: 50vw;
+  background: rgba(139, 92, 246, 0.18);
+  bottom: -10%;
+  right: -10%;
+  animation-delay: -10s;
+}
+
+/* Navbar */
+.landing-navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 20px 5%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 50;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--glass-border);
+  transition: all 0.3s ease;
+}
+
+.landing-navbar.scrolled {
+  padding: 15px 5%;
+  background: rgba(15, 23, 42, 0.85);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+.landing-logo-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  color: white;
+}
+
+.landing-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: transform 0.3s ease;
+}
+
+.landing-logo:hover {
+  transform: scale(1.05);
+}
+
+.landing-brand {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #ffffff, #94a3b8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.landing-nav-links {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+.landing-nav-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 15px;
+  transition: all 0.2s ease;
+}
+
+.landing-nav-link:hover {
+  color: white;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+}
+
+.login-btn-nav {
+  padding: 10px 24px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  text-decoration: none;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-btn-nav:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Hero Content */
+.landing-hero {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  padding: 120px 5% 60px;
+  z-index: 10;
+  box-sizing: border-box;
+  width: 100%;
+  /* `.landing-page` es un flex column de alto fijo (100vh), asi que por
+     defecto este item se ENCOGIA hasta 100vh y su contenido -en el paso 2
+     la grilla de habitaciones mide varios miles de px- quedaba desbordando
+     una caja aplastada. El scroll salia de ese desborde en vez del flujo
+     normal, un armado fragil para el hit-testing de la rueda del mouse.
+     Con `flex-shrink: 0` el hero crece a su contenido real y
+     `.landing-page` scrollea contenido en flujo, como corresponde. */
+  flex-shrink: 0;
+}
+
+.hero-background-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: -2;
+  opacity: 0.3;
+  filter: blur(2px) brightness(0.7);
+  mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
+}
+
+.hero-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  align-items: center;
+  transition: all 0.5s ease;
+}
+
+.hero-content.wizard-active {
+  grid-template-columns: 1fr;
+  max-width: 900px;
+}
+
+.hero-text {
+  animation: fadeUp 0.8s ease-out forwards;
+}
+
+.hero-badge {
+  display: inline-block;
+  padding: 8px 16px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #60a5fa;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 24px;
+  letter-spacing: 0.5px;
+}
+
+.hero-title {
+  font-size: 64px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-bottom: 24px;
+  background: linear-gradient(135deg, #ffffff 30%, #94a3b8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -1.5px;
+}
+
+.hero-subtitle {
+  font-size: 18px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 40px;
+  max-width: 500px;
+}
+
+.hero-features {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 40px;
+}
+
+.hero-feature {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.feature-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary-color);
+  border: 1px solid var(--glass-border);
+}
+
+/* Reservation Form */
+.reservation-form-container {
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  padding: 40px;
+  box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  animation: fadeLeft 0.8s ease-out 0.2s forwards;
+  opacity: 0;
+  transform: translateX(40px);
+}
+
+.reservation-form-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.reservation-form-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 32px;
+}
+
+.public-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.public-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.public-input-group.full-width {
+  grid-column: span 2;
+}
+
+.public-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.public-input {
+  width: 100%;
+  padding: 14px 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  color: white;
+  font-size: 15px;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.public-input:focus {
+  border-color: var(--primary-color);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+}
+
+.public-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+select.public-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255, 255, 255, 0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 16px;
+}
+
+select.public-input option {
+  background: var(--bg-gradient-end);
+  color: white;
+}
+
+.submit-res-btn {
+  width: 100%;
+  padding: 16px;
+  margin-top: 32px;
+  background: linear-gradient(135deg, var(--primary-color), var(--primary-hover));
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 10px 20px -5px rgba(59, 130, 246, 0.5);
+}
+
+.submit-res-btn::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(rgba(255, 255, 255, 0.2), transparent);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.submit-res-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 15px 25px -5px rgba(59, 130, 246, 0.6);
+}
+
+.submit-res-btn:hover::after {
+  opacity: 1;
+}
+
+.submit-res-btn:active {
+  transform: translateY(0);
+}
+
+.submit-res-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Success State */
+.success-state {
+  text-align: center;
+  padding: 40px 20px;
+  animation: fadeUp 0.5s ease-out forwards;
+}
+
+.success-icon {
+  width: 80px;
+  height: 80px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 24px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  box-shadow: 0 0 30px rgba(16, 185, 129, 0.2);
+}
+
+.success-title {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: white;
+}
+
+.success-message {
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1.5;
+  margin-bottom: 32px;
+}
+
+.reset-btn {
+  padding: 12px 24px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.reset-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Animations */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeLeft {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ===== RESPONSIVE ===== */
+
+/* Desktop de poca altura (laptops ~720-800px). El hero reserva 120px de
+   padding superior para una navbar que mide 73px, y con el tamaño completo
+   del titulo el contenido pide ~755px: en una pantalla de 630px sobraba un
+   scroll corto que cortaba el boton "Continuar" al medio. Se comprime el
+   espaciado vertical para que la portada entre completa sin scroll. */
+@media (min-width: 1025px) and (max-height: 820px) {
+  .landing-hero {
+    padding: 88px 5% 20px;
+    align-items: center;
+  }
+  .hero-title {
+    font-size: 44px;
+    margin-bottom: 16px;
+  }
+  .hero-subtitle {
+    font-size: 16px;
+    margin-bottom: 24px;
+  }
+  .hero-features {
+    gap: 16px;
+    margin-bottom: 0;
+  }
+  .booking-wizard-container {
+    padding: 28px;
+  }
+  .wizard-progress-bar {
+    margin-bottom: 28px;
+  }
+}
+
+/* Tablet landscape */
+@media (max-width: 1024px) {
+  .landing-hero {
+    padding: 100px 4% 48px;
+  }
+  .hero-title {
+    font-size: 48px;
+  }
+  .hero-content {
+    grid-template-columns: 1fr;
+    gap: 40px;
+    text-align: center;
+  }
+  .hero-text {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .hero-features {
+    justify-content: center;
+  }
+  .reservation-form-container {
+    animation: fadeUp 0.8s ease-out 0.2s forwards;
+    transform: translateY(40px);
+    margin: 0 auto;
+    max-width: 600px;
+    width: 100%;
+  }
+}
+
+/* Tablet portrait */
+@media (max-width: 768px) {
+  .landing-navbar {
+    padding: 14px 4%;
+  }
+  .landing-brand {
+    font-size: 18px;
+  }
+  .landing-hero {
+    padding: 90px 4% 40px;
+    align-items: flex-start;
+  }
+  .hero-content {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    text-align: center;
+  }
+  .hero-title {
+    font-size: 40px;
+    letter-spacing: -1px;
+  }
+  .hero-subtitle {
+    font-size: 16px;
+    max-width: 100%;
+  }
+  .hero-features {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 16px;
+  }
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+  .landing-navbar {
+    padding: 12px 4%;
+  }
+  .landing-brand {
+    font-size: 16px;
+  }
+  .landing-logo {
+    width: 36px;
+    height: 36px;
+  }
+  .landing-nav-links {
+    gap: 12px;
+  }
+  .landing-nav-link {
+    display: none;
+  }
+  .landing-hero {
+    padding: 80px 4% 32px;
+    min-height: auto;
+  }
+  .hero-content {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    text-align: center;
+  }
+  .hero-content.wizard-active {
+    max-width: 100%;
+  }
+  .hero-title {
+    font-size: 32px;
+    letter-spacing: -0.5px;
+  }
+  .hero-subtitle {
+    font-size: 15px;
+  }
+  .hero-badge {
+    font-size: 12px;
+    padding: 6px 12px;
+  }
+  .hero-features {
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .public-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .public-input-group.full-width {
+    grid-column: span 1;
+  }
+  .reservation-form-container {
+    padding: 24px 20px;
+  }
+}
