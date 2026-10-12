@@ -93,17 +93,96 @@ para cada catalogo con identidad) y verificar que existan los cargos
   sumarlo en 0004 y en `src/utils/permissions.ts`.
 - **Storage:** rutas `{tenant_id}/{id_dueno}/{archivo}`; guardar la ruta relativa.
 
-## Flujos de servidor que consumen esta base (edge functions, pendientes)
+## Flujos de servidor que consumen esta base (edge functions)
 
-- **register-tenant:** crear la cuenta de Auth del administrador con la admin
+- **register-tenant (pendiente):** crear la cuenta de Auth del administrador con la admin
   API (sin tenant) -> `select fn_provision_tenant(<payload>)` -> si falla, borrar
   la cuenta de Auth. Necesita captcha, rate limit y verificacion de correo. El
   payload esta documentado en el encabezado de 0008.
-- **admin-create-user:** derivar el tenant del llamador (nunca del body) y crear
-  la cuenta con `auth.admin.createUser` con `app_metadata = { tenant_id, fk_cargo }`
-  y `user_metadata = { nombre, documento, telefono, usuario, fk_tipo_doc }`. El
-  trigger `handle_new_user` crea el perfil. Validar que el llamador este activo
-  y que un gerente no asigne el cargo de administrador.
+- **admin-create-user (implementada):** deriva el tenant del llamador (nunca del
+  body) y crea la cuenta con `auth.admin.createUser` con
+  `app_metadata = { tenant_id, fk_cargo }` y
+  `user_metadata = { nombre, documento, telefono, usuario, fk_tipo_doc }`. El
+  trigger `handle_new_user` crea el perfil. Valida que el llamador este activo y
+  que un gerente no asigne el cargo de administrador. Detalle abajo.
+
+### admin-create-user
+
+Codigo en `supabase/functions/admin-create-user/` (`index.ts` es la funcion;
+`validation.ts` tiene las reglas puras y `validation.test.ts` sus tests, que
+corren con `npm test` desde la raiz del repo).
+
+**Que hace, en orden:**
+
+1. Autentica al llamador con su JWT.
+2. Toma el `tenant_id` de la claim `app_metadata` del JWT y le pregunta a la base
+   por su rol con `current_user_role()` (0004), que devuelve `null` si el perfil
+   esta inactivo o el tenant suspendido. Solo `admin`, `administrador` y
+   `gerente` pasan.
+3. Valida el body con las mismas reglas que `UsuarioForm.tsx`. Cualquier campo
+   que no sea de la lista (por ejemplo un `tenant_id`) se ignora.
+4. Verifica el cargo: debe existir, ser de personal y un gerente no puede asignar
+   `admin`/`administrador`. `guard_cargo_admin` (0005) no se dispara con
+   `service_role`, por eso la comprobacion vive tambien en la funcion.
+5. Rechaza correo duplicado (unico global) y `usuario` duplicado dentro del
+   tenant. El trigger renombra un handle repetido en silencio, asi que el
+   duplicado hay que rechazarlo antes.
+6. Crea la cuenta con `email_confirm: true` y comprueba que el trigger creo el
+   perfil en ese tenant. Si algo falla despues de crear la cuenta de Auth, la
+   borra.
+
+`email_confirm: true` significa que **no se envia correo de confirmacion**: el
+administrador define la clave y la cuenta queda lista. (`signUp` enviaria el
+correo, pero exige el registro directo habilitado y no puede escribir
+`app_metadata`.)
+
+**Contrato:** `POST` con `Authorization: Bearer <jwt del usuario>`.
+
+```json
+{
+  "correo": "ana@hotel.com", "clave": "secreto123", "nombre": "Ana Gomez",
+  "documento": "1234567", "telefono": "+595 981 123456",
+  "usuario": "ana_gomez", "fk_tipo_doc": 1, "fk_cargo": 3
+}
+```
+
+`telefono` es opcional (`null` o vacio). Respuesta correcta: `201 { "ok": true, "id": "<uuid de Auth>" }`.
+Error: `{ "error": "<mensaje en espanol>" }` con estos estados:
+
+| Estado | Causa |
+|---|---|
+| 400 | body invalido, campo faltante o con formato incorrecto, cargo o tipo de documento inexistente |
+| 401 | sin token o sesion invalida |
+| 403 | cuenta sin hotel, rol sin permiso, o gerente asignando el cargo de administrador |
+| 405 | metodo distinto de `POST` |
+| 409 | correo o `usuario` ya existentes |
+| 429 | limite de Auth |
+| 500 | fallo interno (se revierte la cuenta de Auth si ya se habia creado) |
+
+**Despliegue** (desde `saas-db/`, con el proyecto enlazado):
+
+```bash
+supabase functions deploy admin-create-user
+```
+
+Secretos: `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` los
+inyecta el runtime de Supabase; no hay que cargarlos ni escribirlos en el
+codigo. Opcional: `supabase secrets set ALLOWED_ORIGIN=https://tu-sitio.com`
+para limitar CORS (por defecto `*`; la autenticacion es por bearer token).
+`verify_jwt` queda activo por defecto.
+
+**Prueba local** (requiere Docker):
+
+```bash
+supabase start
+supabase functions serve admin-create-user
+```
+
+Luego iniciar sesion en la app apuntando `VITE_SUPABASE_URL` al stack local
+(`http://127.0.0.1:54321`) con un administrador de un tenant de prueba, y crear
+un usuario desde la pantalla "Usuarios": la app llama a la funcion con
+`supabase.functions.invoke`. Esta funcion **no se probo contra un proyecto de
+Supabase** al escribirse: los tests cubren solo `validation.ts`.
 
 ## Cambios obligatorios en el frontend
 
