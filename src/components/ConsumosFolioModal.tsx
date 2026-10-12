@@ -308,7 +308,7 @@ export default function ConsumosFolioModal({
                 <div id="buscador-consumo">
                   <AutocompleteConceptos
                     key={conceptoBuscadorKey}
-                    conceptos={conceptosSeleccionables as any}
+                    conceptos={conceptosSeleccionables}
                     value=""
                     onChange={handleSeleccionBuscador}
                   />

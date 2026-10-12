@@ -6,6 +6,19 @@ import { ModuleLayout } from '../components/ModuleLayout';
 import { Image as ImageIcon } from 'lucide-react';
 import '../index.css';
 import { COLORS, tint } from '../constants/colors';
+import type { Tables } from '../types/supabase';
+
+/** Room type row as loaded by HabitacionService.getTiposHabitacion (with embedded images). */
+// imagenes_tipo_habitacion is not part of the generated Supabase types, so it is declared locally.
+interface TipoHabitacionImagen {
+  id: number;
+  ruta_storage: string;
+  es_principal: boolean;
+}
+
+type TipoHabitacionRow = Pick<Tables<'tipo_habitacion'>, 'id' | 'nombre' | 'capacidad' | 'descripcion'> & {
+  imagenes_tipo_habitacion?: TipoHabitacionImagen[] | null;
+};
 
 interface ManageTipoHabitacionProps {
   onBack: () => void;
@@ -16,7 +29,7 @@ interface ManageTipoHabitacionProps {
    * `openNewOnMount` seguía activo: es la señal para que Dashboard vuelva al
    * formulario de habitación con este tipo ya seleccionado.
    */
-  onTipoCreado?: (tipo: any) => void;
+  onTipoCreado?: (tipo: TipoHabitacionRow) => void;
   /** Ídem al cancelar el alta: vuelve al formulario de habitación sin tipo nuevo. */
   onCancelarCreacion?: () => void;
 }
@@ -27,13 +40,13 @@ export default function ManageTipoHabitacion({
   onTipoCreado,
   onCancelarCreacion,
 }: ManageTipoHabitacionProps) {
-  const [tipos, setTipos] = useState<any[]>([]);
+  const [tipos, setTipos] = useState<TipoHabitacionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [tipoToEdit, setTipoToEdit] = useState<any | null>(null);
+  const [tipoToEdit, setTipoToEdit] = useState<TipoHabitacionRow | null>(null);
 
   useEffect(() => {
     if (!isFormOpen) {
@@ -72,7 +85,7 @@ export default function ManageTipoHabitacion({
     setIsFormOpen(true);
   };
 
-  const handleEditTipo = (tipo: any) => {
+  const handleEditTipo = (tipo: TipoHabitacionRow) => {
     setTipoToEdit(tipo);
     setIsFormOpen(true);
   };
@@ -85,7 +98,7 @@ export default function ManageTipoHabitacion({
     }
   };
 
-  const handleFormSaved = (createdTipo?: any) => {
+  const handleFormSaved = (createdTipo?: TipoHabitacionRow) => {
     setIsFormOpen(false);
     setTipoToEdit(null);
     if (openNewOnMount && createdTipo && onTipoCreado) {
@@ -103,11 +116,11 @@ export default function ManageTipoHabitacion({
     );
   }
 
-  const columns: Column<any>[] = [
+  const columns: Column<TipoHabitacionRow>[] = [
     {
       header: 'Nombre',
-      render: (tipo: any) => {
-        const principal = tipo.imagenes_tipo_habitacion?.find((img: any) => img.es_principal)
+      render: (tipo) => {
+        const principal = tipo.imagenes_tipo_habitacion?.find((img) => img.es_principal)
           || tipo.imagenes_tipo_habitacion?.[0];
 
         return (
@@ -132,13 +145,13 @@ export default function ManageTipoHabitacion({
     },
     {
       header: 'Capacidad',
-      render: (tipo: any) => (
+      render: (tipo) => (
         <span>{tipo.capacidad} Personas</span>
       )
     },
     {
       header: 'Descripción',
-      render: (tipo: any) => (
+      render: (tipo) => (
         <span style={{ color: 'var(--text-secondary)' }}>
           {tipo.descripcion ? (tipo.descripcion.length > 80 ? tipo.descripcion.substring(0, 80) + '...' : tipo.descripcion) : '-'}
         </span>
@@ -147,7 +160,7 @@ export default function ManageTipoHabitacion({
     {
       header: 'Acciones',
       align: 'center',
-      render: (tipo: any) => (
+      render: (tipo) => (
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
           <button 
             onClick={() => handleEditTipo(tipo)}

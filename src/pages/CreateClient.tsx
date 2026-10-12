@@ -9,12 +9,13 @@ import { ClienteRecurrenteBadge } from '../components/ClienteRecurrenteBadge';
 import { isClienteRecurrente, getReservationCount } from '../utils/clienteRecurrencia';
 import '../index.css';
 import { COLORS, tint } from '../constants/colors';
+import type { Tables } from '../types/supabase';
 
 interface CreateClientProps {
   onCancel: () => void;
   /** Al crear (no editar), recibe la fila recién insertada. */
-  onCreated?: (createdClient?: any) => void;
-  clientToEdit?: any | null;
+  onCreated?: (createdClient?: Tables<'clientes'>) => void;
+  clientToEdit?: Tables<'clientes'> | null;
 }
 
 // Campos de texto libre: mismo criterio que Gestión de habitaciones y
@@ -81,16 +82,16 @@ export default function CreateClient({ onCancel, onCreated, clientToEdit }: Crea
   });
 
   // Reference Catalogs
-  const [catTipoDoc, setCatTipoDoc] = useState<any[]>([]);
-  const [catTipoCont, setCatTipoCont] = useState<any[]>([]);
-  const [catTipoOp, setCatTipoOp] = useState<any[]>([]);
+  const [catTipoDoc, setCatTipoDoc] = useState<Pick<Tables<'tipo_documento'>, 'cod_tipodoc' | 'descripcion_tipodoc'>[]>([]);
+  const [catTipoCont, setCatTipoCont] = useState<Pick<Tables<'tipo_contribuyente'>, 'id_tipo_contribuyente' | 'descripcion'>[]>([]);
+  const [catTipoOp, setCatTipoOp] = useState<Pick<Tables<'tipo_operacion'>, 'id_tipo_operacion' | 'codigo_tipo_op'>[]>([]);
 
   // Location Catalogs
-  const [catPaises, setCatPaises] = useState<any[]>([]);
-  const [catDepartamentos, setCatDepartamentos] = useState<any[]>([]);
-  const [catDistritos, setCatDistritos] = useState<any[]>([]);
-  const [catCiudades, setCatCiudades] = useState<any[]>([]);
-  const [catBarrios, setCatBarrios] = useState<any[]>([]);
+  const [catPaises, setCatPaises] = useState<Pick<Tables<'paises'>, 'id_pais' | 'pais'>[]>([]);
+  const [catDepartamentos, setCatDepartamentos] = useState<Pick<Tables<'departamentos'>, 'cod_depto' | 'nombre_depto'>[]>([]);
+  const [catDistritos, setCatDistritos] = useState<Pick<Tables<'distritos'>, 'cod_distrito' | 'nombre_distrito'>[]>([]);
+  const [catCiudades, setCatCiudades] = useState<Pick<Tables<'ciudades'>, 'cod_ciudades' | 'nombre_ciudad'>[]>([]);
+  const [catBarrios, setCatBarrios] = useState<Pick<Tables<'barrios'>, 'cod_barrio' | 'nombre_barrio'>[]>([]);
 
   // UI State
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -420,7 +421,7 @@ export default function CreateClient({ onCancel, onCreated, clientToEdit }: Crea
         fk_barrios: formData.fk_barrios ? parseInt(formData.fk_barrios) : null,
       };
 
-      let creado: any;
+      let creado: Tables<'clientes'> | undefined;
       if (isEditing) {
         await ClientService.updateClient(clientToEdit.id_cliente, payload);
         setSuccess("¡Cliente actualizado exitosamente!");
