@@ -21,7 +21,7 @@ import {
   CLEAN_STATUS_STYLES,
   OCUPADO_STYLE,
   DESOCUPADO_STYLE
-} from '../components/roomStatus';
+} from '../utils/roomStatus';
 import '../index.css';
 import { tint } from '../constants/colors';
 

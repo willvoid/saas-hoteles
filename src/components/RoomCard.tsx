@@ -6,7 +6,7 @@ import {
   CLEAN_STATUS_STYLES,
   DEFAULT_STATUS_STYLE,
   StatusStyle
-} from './roomStatus';
+} from '../utils/roomStatus';
 
 export interface RoomCardData {
   id: number;

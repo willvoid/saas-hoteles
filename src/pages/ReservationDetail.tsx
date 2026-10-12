@@ -13,7 +13,7 @@ import { getAllowedTargets, requiresConfirmation, getTransitionCopy, toCanonical
 import { SearchBox } from '../components/SearchBox';
 import { FilterChips, ChipOption } from '../components/FilterChips';
 import { RoomCard, RoomCardData } from '../components/RoomCard';
-import { getCleanStatus, OCUPADO_STYLE, DESOCUPADO_STYLE } from '../components/roomStatus';
+import { getCleanStatus, OCUPADO_STYLE, DESOCUPADO_STYLE } from '../utils/roomStatus';
 import { verificionCiPy, validarNumeroNoNegativo, validarPasaporte } from '../utils/diccionarioValidaciones';
 import { calculateNights, calculateNightsForNewDetalle, calculateRoomSubtotal, calculateReservationTotal, deriveNightsFromSubtotal } from '../utils/pricing';
 import { resolveTarifaForStay } from '../utils/tarifas';

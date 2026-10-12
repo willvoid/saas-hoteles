@@ -19,7 +19,7 @@ import { SearchBox } from '../components/SearchBox';
 import { FilterChips } from '../components/FilterChips';
 import { StatusTabs } from '../components/StatusTabs';
 import { StatusBadge } from '../components/StatusBadge';
-import { getStatusStyle } from '../components/roomStatus';
+import { getStatusStyle } from '../utils/roomStatus';
 import { COLORS, tint } from '../constants/colors';
 
 // Portal helper: renders children directly on document.body so position:fixed

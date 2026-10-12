@@ -1,5 +1,5 @@
 import React from 'react';
-import { StatusStyle } from './roomStatus';
+import { StatusStyle } from '../utils/roomStatus';
 
 interface StatusBadgeProps {
   label: string;
