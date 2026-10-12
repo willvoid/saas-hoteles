@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import Dashboard from './pages/Dashboard';
@@ -7,6 +7,7 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import LandingPage from './pages/LandingPage';
 import TenantSuspended from './pages/TenantSuspended';
+import HotelSelect from './pages/HotelSelect';
 import { getCurrentSession, onAuthStateChange, signOut, resolveSession } from './services/authService';
 import type { SessionUser } from './services/authService';
 import type { TenantInfo } from './services/tenantService';
@@ -22,29 +23,40 @@ const MENSAJE_DESACTIVADO =
 function App() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [suspendedTenant, setSuspendedTenant] = useState<TenantInfo | null>(null);
+  // A signed-in account may have no resolvable hotel yet (it is choosing one).
+  const [hasSession, setHasSession] = useState(false);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const applySession = (session: Session | null) => {
-      if (session?.user) {
-        resolveSession(session.user.id)
-          .then((result) => {
-            setUser(result.status === 'ok' ? result.user : null);
-            setSuspendedTenant(result.status === 'suspended' ? result.tenant : null);
-          })
-          .catch(() => {
-            setUser(null);
-            setSuspendedTenant(null);
-          });
-      } else {
-        setUser(null);
-        setSuspendedTenant(null);
-      }
-    };
+  const applySession = useCallback(async (session: Session | null) => {
+    if (!session?.user) {
+      setHasSession(false);
+      setUser(null);
+      setSuspendedTenant(null);
+      return;
+    }
 
-    getCurrentSession().then((session) => {
-      applySession(session);
+    setHasSession(true);
+    try {
+      const result = await resolveSession(session.user.id);
+      setUser(result.status === 'ok' ? result.user : null);
+      setSuspendedTenant(result.status === 'suspended' ? result.tenant : null);
+    } catch {
+      setUser(null);
+      setSuspendedTenant(null);
+    }
+  }, []);
+
+  // Reloads the profile after the active hotel changed (switch or create).
+  const reloadSession = useCallback(async () => {
+    await applySession(await getCurrentSession());
+  }, [applySession]);
+
+  useEffect(() => {
+    // The profile is awaited before dropping the loader: otherwise a reload on
+    // /administracion would redirect to /login while `user` is still null.
+    getCurrentSession().then(async (session) => {
+      await applySession(session);
       setLoading(false);
     });
 
@@ -55,7 +67,7 @@ function App() {
     });
 
     return () => sub.subscription.unsubscribe();
-  }, []);
+  }, [applySession]);
 
   // Desactivación en caliente: si un admin marca la cuenta como Inactiva, la
   // sesión abierta se cierra al instante (evento realtime) en vez de esperar al
@@ -71,6 +83,7 @@ function App() {
       cerrado = true;
       await signOut();
       setUser(null);
+      setHasSession(false);
       navigate('/login', { replace: true, state: { mensaje: MENSAJE_DESACTIVADO } });
     };
 
@@ -98,6 +111,7 @@ function App() {
     await signOut();
     setUser(null);
     setSuspendedTenant(null);
+    setHasSession(false);
     navigate('/login');
   };
 
@@ -109,20 +123,38 @@ function App() {
     );
   }
 
+  const goToHotels = () => navigate('/hoteles');
+
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/login" replace />} />
       <Route path="/h/:slug" element={<LandingPage />} />
-      <Route path="/login" element={<Login setUser={setUser} setSuspendedTenant={setSuspendedTenant} />} />
+      <Route
+        path="/login"
+        element={<Login setUser={setUser} setSuspendedTenant={setSuspendedTenant} setHasSession={setHasSession} />}
+      />
       <Route path="/recuperar-clave" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route
+        path="/hoteles"
+        element={
+          hasSession ? (
+            <HotelSelect user={user} onEntered={reloadSession} onLogout={handleLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
       <Route
         path="/administracion"
         element={
           user ? (
-            <Dashboard user={user} onLogout={handleLogout} />
+            // key: a different hotel starts from a clean dashboard (tabs, drafts, subscriptions).
+            <Dashboard key={user.tenant.id} user={user} onLogout={handleLogout} onSwitchHotel={goToHotels} />
           ) : suspendedTenant ? (
-            <TenantSuspended tenant={suspendedTenant} onLogout={handleLogout} />
+            <TenantSuspended tenant={suspendedTenant} onLogout={handleLogout} onSwitchHotel={goToHotels} />
+          ) : hasSession ? (
+            <Navigate to="/hoteles" replace />
           ) : (
             <Navigate to="/login" replace />
           )

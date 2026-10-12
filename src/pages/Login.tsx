@@ -14,9 +14,10 @@ import '../index.css';
 interface LoginProps {
   setUser: (user: SessionUser) => void;
   setSuspendedTenant: (tenant: TenantInfo | null) => void;
+  setHasSession: (value: boolean) => void;
 }
 
-export default function Login({ setUser, setSuspendedTenant }: LoginProps) {
+export default function Login({ setUser, setSuspendedTenant, setHasSession }: LoginProps) {
   const location = useLocation();
   // Motivo del redirect (p. ej. la cuenta fue desactivada mientras navegaba).
   const mensajeRedirect = (location.state as { mensaje?: string } | null)?.mensaje ?? null;
@@ -49,28 +50,32 @@ export default function Login({ setUser, setSuspendedTenant }: LoginProps) {
         throw new Error('Credenciales incorrectas. Verifica tu correo y contraseña.');
       }
 
-      // Session is now active; load the linked profile and enforce estado.
+      // Session is now active; load the profile of the active hotel and enforce
+      // estado. Every account lands on the hotel selector: it lists the hotels
+      // (also when none is active yet) and enters the chosen one.
+      setHasSession(true);
       const authUser = await getCurrentUser();
       const result = authUser ? await resolveSession(authUser.id) : { status: 'missing' as const };
 
       if (result.status === 'suspended') {
         setSuspendedTenant(result.tenant);
-        navigate('/administracion');
+        navigate('/hoteles');
         return;
       }
 
       if (result.status === 'missing') {
-        await signOut();
-        throw new Error('No se encontró el perfil del usuario. Contacte al administrador.');
+        navigate('/hoteles');
+        return;
       }
 
       if ((result.user.estado || 'Activo').trim().toLowerCase() === 'inactivo') {
         await signOut();
+        setHasSession(false);
         throw new Error('Usuario inactivo. Contacte al administrador.');
       }
 
       setUser(result.user);
-      navigate('/administracion');
+      navigate('/hoteles');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ocurrió un error inesperado al iniciar sesión.');
     } finally {
