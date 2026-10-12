@@ -186,6 +186,7 @@ async function handle(req: Request): Promise<Response> {
       .from('usuario')
       .select('id_usuario, tenant_id')
       .eq('auth_id', authId)
+      .eq('tenant_id', tenantId)
       .maybeSingle();
     if (profileError || !profile || Number(profile.tenant_id) !== tenantId) {
       throw new Error('profile not created');
