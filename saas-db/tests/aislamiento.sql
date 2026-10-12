@@ -5,7 +5,7 @@
 -- puede ver, modificar ni enlazar datos del otro. Corre dentro de una
 -- transaccion y la revierte al final: no deja nada en la base.
 --
--- Requisitos: migraciones 0001-0011 y supabase/seed.sql aplicados.
+-- Requisitos: migraciones 0001-0013 y supabase/seed.sql aplicados.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/aislamiento.sql
 --
@@ -665,6 +665,135 @@ begin
     v_base || jsonb_build_object('fecha_entrada', (current_date + 38)::text, 'fecha_salida', (current_date + 39)::text));
   perform t.ok(not (v_res ->> 'success')::boolean and (v_res ->> 'error_message') like '%pendientes%',
                'tope de reservas web pendientes por cliente');
+  perform t.volver();
+end $$;
+
+-- ─── Una cuenta, varios hoteles (0013) ───────────────────────────────────────
+-- a_admin es administrador de A y aqui tambien gerente de B: rige el cargo del
+-- hotel activo del JWT, nunca el de otro perfil de la misma cuenta.
+do $$
+declare
+  v_cuenta  uuid   := t.g('a_admin')::uuid;
+  v_ta      bigint := t.g('ta')::bigint;
+  v_tb      bigint := t.g('tb')::bigint;
+  c_ger     bigint := (select id_cargo from public.cargo where lower(cargo) = 'gerente' limit 1);
+  c_rec     bigint := (select id_cargo from public.cargo where lower(cargo) = 'recepcionista' limit 1);
+  v_contrib bigint := (select min(id_tipo_contribuyente) from public.tipo_contribuyente);
+  v_regimen bigint := (select min(id_regimen) from public.tipo_regimen);
+  v_lim_b   bigint := (select id_usuario from public.usuario where correo = 'lim@b.test');
+  v_plant   bigint;
+  v_multi   uuid := gen_random_uuid();
+  v_res     jsonb;
+  v_tc      bigint;
+  v_payload jsonb;
+begin
+  -- Mismo correo en dos hoteles; un solo perfil por (cuenta, hotel).
+  insert into public.usuario
+    (tenant_id, auth_id, correo, nombre, documento, usuario, fk_tipo_doc, fk_cargo, estado)
+  values (v_tb, v_cuenta, 'admin@a.test', 'Admin A en B', '1', 'admin_a_en_b', 1, c_ger, 'Activo');
+  perform t.ok((select count(*) from public.usuario where auth_id = v_cuenta) = 2,
+               'una cuenta tiene un perfil por hotel, con el mismo correo');
+
+  perform t.falla(format(
+    'insert into public.usuario (tenant_id, auth_id, correo, nombre, documento, usuario, fk_tipo_doc, fk_cargo) '
+    'values (%s, ''%s'', ''otro@a.test'', ''X'', ''1'', ''x_dup'', 1, %s)', v_tb, v_cuenta, c_ger),
+    '23505', 'una cuenta no puede tener dos perfiles en el mismo hotel');
+  perform t.falla(format(
+    'insert into public.usuario (tenant_id, auth_id, correo, nombre, documento, usuario, fk_tipo_doc, fk_cargo) '
+    'values (%s, null, ''ADMIN@a.test'', ''X'', ''1'', ''x_dup2'', 1, %s)', v_tb, c_ger),
+    '23505', 'el correo sigue siendo unico dentro de un hotel');
+
+  -- La plantilla nunca se lista como hotel de la cuenta.
+  insert into public.tenants (nombre, slug, estado, plan)
+    values ('Plantilla zz', 'zz-plantilla', 'suspendido', 'plantilla') returning id into v_plant;
+  insert into public.usuario
+    (tenant_id, auth_id, correo, nombre, documento, usuario, fk_tipo_doc, fk_cargo, estado)
+  values (v_plant, v_cuenta, 'admin@a.test', 'Admin A en plantilla', '1', 'admin_plant', 1, c_ger, 'Activo');
+
+  -- El cargo es el del hotel activo.
+  perform t.actuar(v_cuenta::text, v_ta);
+  perform t.ok(public.current_es_admin(), 'en A la cuenta es administradora');
+  perform t.actuar(v_cuenta::text, v_tb);
+  perform t.ok(public.current_user_role() = 'gerente', 'en B rige el cargo de gerente, no el de A');
+  perform t.ok(not public.current_es_admin(), 'en B la cuenta no es administradora');
+  perform t.falla(format('update public.usuario set fk_cargo = %s where id_usuario = %s', t.g('c_adm'), v_lim_b),
+                  '42501', 'gerente en B (admin en A) no puede dar el cargo de administrador en B');
+  perform t.falla(format('update public.usuario set fk_cargo = %s where auth_id = ''%s'' and tenant_id = %s',
+                         t.g('c_adm'), v_cuenta, v_tb),
+                  '42501', 'gerente en B (admin en A) no puede ascenderse en B');
+
+  -- Visibilidad: solo el hotel activo.
+  perform t.ok(t.cuenta('select count(*) from public.usuario where tenant_id = ' || v_ta) = 0,
+               'con B activo no se ve el personal de A');
+  perform t.ok(t.cuenta(format('select count(*) from public.usuario where auth_id = ''%s''', v_cuenta)) = 1,
+               'con B activo solo se ve el perfil de la cuenta en B');
+
+  -- Selector de hoteles.
+  perform t.ok((select count(*) from public.fn_mis_hoteles()) = 2,
+               'fn_mis_hoteles lista los dos hoteles y oculta la plantilla');
+  perform t.ok((select es_activo from public.fn_mis_hoteles() where tenant_id = v_tb)
+               and not (select es_activo from public.fn_mis_hoteles() where tenant_id = v_ta),
+               'solo el hotel del JWT figura como activo');
+  perform t.ok((select lower(cargo) from public.fn_mis_hoteles() where tenant_id = v_ta) in ('admin', 'administrador'),
+               'fn_mis_hoteles informa el cargo de cada hotel');
+  perform t.volver();
+
+  perform t.anonimo();
+  perform t.falla('select * from public.fn_mis_hoteles()', '42501', 'anon no puede listar hoteles');
+  perform t.volver();
+
+  -- Hotel activo suspendido: la cuenta conserva el selector y los catalogos
+  -- si tiene otro hotel; una cuenta de un solo hotel suspendido no los lee.
+  update public.tenants set estado = 'suspendido' where id = v_tb;
+  perform t.actuar(v_cuenta::text, v_tb);
+  perform t.ok(not public.current_usuario_activo(), 'con el hotel activo suspendido no hay acceso operativo');
+  perform t.ok(t.cuenta('select count(*) from public.tipo_documento') > 0,
+               'los catalogos siguen legibles si la cuenta tiene otro hotel activo');
+  perform t.ok((select count(*) from public.fn_mis_hoteles()) = 2,
+               'el selector sigue listando el hotel suspendido');
+  perform t.volver();
+  perform t.actuar(t.g('b_admin'), v_tb);
+  perform t.ok(t.cuenta('select count(*) from public.tipo_documento') = 0,
+               'sin hotel activo ni otro hotel, los catalogos no se leen');
+  perform t.volver();
+  update public.tenants set estado = 'trial' where id = v_tb;
+
+  -- handle_new_user: el perfil del segundo hotel se crea sin tocar el primero.
+  insert into auth.users (id, email, raw_app_meta_data, raw_user_meta_data)
+  values (v_multi, 'multi@x.test', jsonb_build_object('tenant_id', v_ta, 'fk_cargo', c_rec),
+          jsonb_build_object('nombre', 'Multi', 'documento', '55', 'fk_tipo_doc', 1));
+  update auth.users
+    set raw_app_meta_data = jsonb_build_object('tenant_id', v_tb, 'fk_cargo', c_rec)
+    where id = v_multi;
+  perform t.ok((select count(*) from public.usuario where auth_id = v_multi) = 2
+               and exists (select 1 from public.usuario where auth_id = v_multi and tenant_id = v_tb),
+               'el trigger crea el perfil del segundo hotel y conserva el primero');
+  update auth.users set raw_app_meta_data = raw_app_meta_data || '{"x":1}'::jsonb where id = v_multi;
+  perform t.ok((select count(*) from public.usuario where auth_id = v_multi) = 2,
+               'el trigger es idempotente por hotel');
+
+  -- Alta de un hotel para una cuenta que ya tiene otros (create-hotel).
+  v_payload := jsonb_build_object(
+    'tenant', jsonb_build_object('nombre', 'Hotel Multi', 'slug', 'hotel-multi'),
+    'admin', jsonb_build_object('auth_id', v_cuenta, 'nombre', 'Admin A', 'documento', '1', 'fk_tipo_doc', 1),
+    'empresa', jsonb_build_object('ruc', '80000099-9', 'razon_social', 'Hotel C SA',
+                                  'fk_contribuyente', v_contrib, 'fk_regimen', v_regimen),
+    'establecimiento', jsonb_build_object('direccion', 'Calle 3', 'fk_barrio', 1));
+  v_res := public.fn_provision_tenant(v_payload);
+  v_tc := (v_res ->> 'tenant_id')::bigint;
+  perform t.ok(exists (select 1 from public.usuario where auth_id = v_cuenta and tenant_id = v_tc),
+               'fn_provision_tenant da de alta un hotel para una cuenta que ya tiene otros');
+  perform t.ok((select (raw_app_meta_data ->> 'tenant_id')::bigint from auth.users where id = v_cuenta) = v_tc,
+               'el hotel nuevo queda como hotel activo de la cuenta');
+  perform t.falla(format('select public.fn_provision_tenant(%L::jsonb)',
+                         jsonb_set(v_payload, '{tenant,slug}', '"hotel-multi-2"')::text),
+                  '23505', 'el RUC sigue siendo unico entre hoteles');
+
+  perform t.actuar(v_cuenta::text, v_tc);
+  perform t.ok(public.current_es_admin(), 'en el hotel nuevo la cuenta es administradora');
+  perform t.ok((select count(*) from public.fn_mis_hoteles()) = 3
+               and (select es_activo from public.fn_mis_hoteles() where tenant_id = v_tc),
+               'el selector lista los tres hoteles con el nuevo como activo');
   perform t.volver();
 end $$;
 
