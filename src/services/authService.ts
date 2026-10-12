@@ -1,8 +1,9 @@
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
 import type { Tables } from '../types/supabase';
-import { loadTenant, TENANT_SUSPENDIDO } from './tenantService';
+import { getCurrentTenantId, loadTenant, TENANT_SUSPENDIDO } from './tenantService';
 import type { TenantInfo } from './tenantService';
+import { readFunctionError } from '../utils/functionError';
 
 // Single boundary for all Supabase Auth interaction. Components and hooks must
 // go through this service instead of importing the supabase client directly.
@@ -41,10 +42,15 @@ export type SessionResult =
 // Usar el RPC además garantiza que el rol del front y el que aplica la base
 // no puedan divergir nunca: salen de la misma función.
 export async function loadProfile(authId: string): Promise<SessionUser | null> {
+  // One account can have a profile per hotel: the active one is the JWT claim.
+  const tenantId = await getCurrentTenantId();
+  if (tenantId === null) return null;
+
   const { data, error } = await supabase
     .from('usuario')
     .select('*, cargo:fk_cargo ( cargo )')
     .eq('auth_id', authId)
+    .eq('tenant_id', tenantId)
     .maybeSingle();
 
   if (error) throw error;
@@ -118,6 +124,12 @@ export function onAuthStateChange(callback: (event: AuthChangeEvent, session: Se
 
 // Admin-only staff creation. Delegates to the admin-create-user Edge Function,
 // which uses the service_role key (never exposed to the browser).
-export function adminCreateUser(payload: SignUpMetadata & { correo: string; clave: string }) {
-  return supabase.functions.invoke('admin-create-user', { body: payload });
+//
+// invoke() discards the response body on a non-2xx, so the function's Spanish
+// message is read from the error context and put back in `data.error`, which is
+// where the caller (UsuarioForm) already looks for it.
+export async function adminCreateUser(payload: SignUpMetadata & { correo: string; clave: string }) {
+  const { data, error } = await supabase.functions.invoke('admin-create-user', { body: payload });
+  if (error) return { data: { error: await readFunctionError(error) }, error };
+  return { data, error };
 }

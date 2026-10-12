@@ -1960,6 +1960,19 @@ export type Database = {
         Args: { p_slug: string; p_payload: Json }
         Returns: Json
       }
+      fn_mis_hoteles: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          tenant_id: number
+          nombre: string
+          slug: string
+          estado: string
+          trial_fin: string | null
+          id_usuario: number
+          cargo: string
+          es_activo: boolean
+        }[]
+      }
       current_user_role: {
         Args: Record<PropertyKey, never>
         Returns: string
