@@ -15,6 +15,7 @@ Guía de referencia para agentes de IA (Claude Code, GGA, etc.) que trabajen en 
 src/
 ├── assets/       # Imágenes, iconos y vectores de la UI (empaquetados con Vite)
 ├── components/   # Componentes UI reutilizables (botones, inputs, modales aislados)
+├── constants/    # Constantes de la app (colores, etc.)
 ├── context/      # Manejadores de estado global (Theme, Auth Context)
 ├── hooks/        # Custom hooks (lógica extraída y reutilizable, ej. useAuth)
 ├── pages/        # Vistas completas que representan una URL (routing)

@@ -7,7 +7,7 @@
   border: 1px solid var(--glass-border);
   border-radius: 24px;
   padding: 40px;
-  box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 30px 60px -15px rgb(var(--black-rgb) / 0.5), inset 0 1px 0 var(--glass-border);
   width: 100%;
   max-width: 900px;
   margin: 0 auto;
@@ -44,8 +44,8 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.4);
-  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: rgb(var(--black-rgb) / 0.4);
+  border: 2px solid rgb(var(--white-rgb) / 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -58,7 +58,7 @@
   background: var(--primary-color);
   border-color: var(--primary-color);
   color: white;
-  box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 15px rgb(var(--primary-rgb) / 0.5);
 }
 
 .wizard-step.completed .step-circle {
@@ -82,7 +82,7 @@
 .wizard-line {
   flex: 1;
   height: 2px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--glass-border);
   margin: 0 15px;
   position: relative;
   top: -12px;
@@ -114,7 +114,7 @@
   position: sticky;
   top: 88px;
   z-index: 20;
-  background: rgba(15, 23, 42, 0.95);
+  background: rgb(var(--bg-gradient-start-rgb) / 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--glass-border);
@@ -158,8 +158,8 @@
   flex: 1;
   min-width: 160px;
   max-width: 280px;
-  background: rgba(16, 185, 129, 0.06);
-  border: 1px solid rgba(16, 185, 129, 0.15);
+  background: rgb(var(--success-rgb) / 0.06);
+  border: 1px solid rgb(var(--success-rgb) / 0.15);
   border-radius: 10px;
   padding: 6px 10px;
   max-height: 72px;
@@ -168,7 +168,7 @@
 
 .step2-selected-compact {
   scrollbar-width: thin;
-  scrollbar-color: rgba(16, 185, 129, 0.3) transparent;
+  scrollbar-color: rgb(var(--success-rgb) / 0.3) transparent;
 }
 .step2-selected-compact::-webkit-scrollbar {
   width: 8px;
@@ -177,13 +177,13 @@
   background: transparent;
 }
 .step2-selected-compact::-webkit-scrollbar-thumb {
-  background: rgba(16, 185, 129, 0.3);
+  background: rgb(var(--success-rgb) / 0.3);
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 999px;
 }
 .step2-selected-compact::-webkit-scrollbar-thumb:hover {
-  background: rgba(16, 185, 129, 0.5);
+  background: rgb(var(--success-rgb) / 0.5);
   background-clip: padding-box;
 }
 
@@ -192,7 +192,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #10b981;
+  color: var(--success-color);
   display: block;
   margin-bottom: 3px;
 }
@@ -224,7 +224,7 @@
 .step2-remove-btn {
   background: transparent;
   border: none;
-  color: rgba(239, 68, 68, 0.6);
+  color: rgb(var(--error-rgb) / 0.6);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
@@ -234,7 +234,7 @@
 }
 
 .step2-remove-btn:hover {
-  color: #ef4444;
+  color: var(--error-color);
 }
 
 .step2-rooms-scroll {
@@ -339,12 +339,12 @@
 }
 
 .cart-summary {
-  background: rgba(59, 130, 246, 0.15);
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: rgb(var(--primary-rgb) / 0.15);
+  border: 1px solid rgb(var(--primary-rgb) / 0.3);
   padding: 8px 16px;
   border-radius: 20px;
   font-size: 14px;
-  color: #60a5fa;
+  color: var(--primary-light);
   white-space: nowrap;
 }
 
@@ -377,8 +377,8 @@
 .input-box input,
 .input-box select {
   padding: 14px 16px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgb(var(--black-rgb) / 0.2);
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
   color: white;
   font-size: 15px;
@@ -390,8 +390,8 @@
 .input-box select:focus,
 .input-box textarea:focus {
   border-color: var(--primary-color);
-  background: rgba(0, 0, 0, 0.3);
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+  background: rgb(var(--black-rgb) / 0.3);
+  box-shadow: 0 0 0 4px rgb(var(--primary-rgb) / 0.15);
 }
 
 /* Buttons */
@@ -400,7 +400,7 @@
   justify-content: flex-end;
   margin-top: 40px;
   padding-top: 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--glass-border);
 }
 
 .step-actions.split {
@@ -417,12 +417,12 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
-  box-shadow: 0 10px 20px -5px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 10px 20px -5px rgb(var(--primary-rgb) / 0.5);
 }
 
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 15px 25px -5px rgba(59, 130, 246, 0.6);
+  box-shadow: 0 15px 25px -5px rgb(var(--primary-rgb) / 0.6);
 }
 
 .btn-primary:disabled {
@@ -433,9 +433,9 @@
 
 .btn-secondary {
   padding: 14px 28px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--glass-bg);
   color: white;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
   font-size: 15px;
   font-weight: 600;
@@ -444,7 +444,7 @@
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--glass-border);
 }
 
 /* Step 2 Rooms Grid */
@@ -456,17 +456,17 @@
 }
 
 .room-card {
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgb(var(--black-rgb) / 0.2);
+  border: 1px solid var(--glass-border);
   border-radius: 16px;
   overflow: hidden;
   transition: all 0.3s ease;
 }
 
 .room-card:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgb(var(--white-rgb) / 0.2);
   transform: translateY(-4px);
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 10px 30px -10px rgb(var(--black-rgb) / 0.5);
 }
 
 .room-sin-disponibilidad {
@@ -475,7 +475,7 @@
   gap: 12px;
   padding: 24px;
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgb(var(--white-rgb) / 0.03);
   border: 1px solid var(--glass-border);
   border-radius: 16px;
   font-size: 14px;
@@ -483,16 +483,16 @@
 
 .room-sin-disponibilidad svg {
   flex-shrink: 0;
-  color: #f59e0b;
+  color: var(--warning-color);
 }
 
 .room-image-placeholder {
   height: 160px;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgb(var(--white-rgb) / 0.02);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--glass-bg);
 }
 
 .room-content {
@@ -556,9 +556,9 @@
 
 .btn-add-room {
   padding: 8px 16px;
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: rgb(var(--primary-rgb) / 0.15);
+  color: var(--primary-light);
+  border: 1px solid rgb(var(--primary-rgb) / 0.3);
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
@@ -567,19 +567,19 @@
 }
 
 .btn-add-room:hover {
-  background: rgba(59, 130, 246, 0.25);
+  background: rgb(var(--primary-rgb) / 0.25);
 }
 
 .selected-rooms-summary {
   margin-top: 24px;
   padding: 20px;
-  background: rgba(16, 185, 129, 0.05);
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  background: rgb(var(--success-rgb) / 0.05);
+  border: 1px solid rgb(var(--success-rgb) / 0.2);
   border-radius: 12px;
 }
 
 .selected-rooms-summary h4 {
-  color: #10b981;
+  color: var(--success-color);
   margin-bottom: 12px;
   font-size: 15px;
 }
@@ -596,7 +596,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgb(var(--black-rgb) / 0.2);
   padding: 10px 16px;
   border-radius: 8px;
   font-size: 14px;
@@ -605,13 +605,13 @@
 .btn-remove-sm {
   background: transparent;
   border: none;
-  color: #ef4444;
+  color: var(--error-color);
   cursor: pointer;
   font-weight: bold;
 }
 
 .btn-remove-sm:hover {
-  color: #f87171;
+  color: var(--error-light);
 }
 
 /* Guests Form Step 3 */
@@ -622,8 +622,8 @@
 }
 
 .room-guest-group {
-  background: rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgb(var(--black-rgb) / 0.1);
+  border: 1px solid var(--glass-bg);
   border-radius: 16px;
   padding: 24px;
 }
@@ -631,8 +631,8 @@
 .room-guest-title {
   font-size: 18px;
   margin-bottom: 20px;
-  color: #60a5fa;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--primary-light);
+  border-bottom: 1px solid var(--glass-border);
   padding-bottom: 10px;
 }
 
@@ -644,8 +644,8 @@
 }
 
 .guest-card {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgb(var(--white-rgb) / 0.03);
+  border: 1px solid var(--glass-bg);
   border-radius: 12px;
   padding: 16px;
 }
@@ -665,12 +665,12 @@
 }
 
 .titular-badge {
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background: rgb(var(--success-rgb) / 0.15);
+  color: var(--success-color);
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 10px;
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid rgb(var(--success-rgb) / 0.3);
 }
 
 .btn-remove-guest {
@@ -682,7 +682,7 @@
 }
 
 .btn-remove-guest:hover {
-  color: #ef4444;
+  color: var(--error-color);
 }
 
 .guest-form-grid {
@@ -693,8 +693,8 @@
 
 .btn-add-guest {
   background: transparent;
-  color: #60a5fa;
-  border: 1px dashed rgba(59, 130, 246, 0.3);
+  color: var(--primary-light);
+  border: 1px dashed rgb(var(--primary-rgb) / 0.3);
   padding: 10px;
   width: 100%;
   border-radius: 8px;
@@ -703,7 +703,7 @@
 }
 
 .btn-add-guest:hover {
-  background: rgba(59, 130, 246, 0.1);
+  background: rgb(var(--primary-rgb) / 0.1);
   border-style: solid;
 }
 
@@ -716,15 +716,15 @@
 .success-icon {
   width: 80px;
   height: 80px;
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background: rgb(var(--success-rgb) / 0.15);
+  color: var(--success-color);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 0 auto 24px;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  box-shadow: 0 0 30px rgba(16, 185, 129, 0.2);
+  border: 1px solid rgb(var(--success-rgb) / 0.3);
+  box-shadow: 0 0 30px rgb(var(--success-rgb) / 0.2);
 }
 
 .success-title {
