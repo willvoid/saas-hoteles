@@ -1,18 +1,15 @@
 import React, { useState } from 'react';
 import { useBooking } from '../../context/BookingContext';
-import { LandingService } from '../../services/landingService';
-import { BookingCliente, BookingPayload } from '../../types/booking';
+import { useBookingSubmit } from '../../hooks/useBookingSubmit';
+import { BookingCliente } from '../../types/booking';
 import { PhoneField } from '../PhoneField';
-import { separarTelefono, validarCodigoPais, validarNumero } from '../../utils/telefono';
-import { validarDocumentoPorTipo, validarEmail, RUC_TIPO_DOC_VALUE } from '../../utils/diccionarioValidaciones';
+import { RUC_TIPO_DOC_VALUE } from '../../utils/diccionarioValidaciones';
 import { Loader2, CheckCircle } from 'lucide-react';
 import { COLORS, tint } from '../../constants/colors';
 
 export default function Step4Client() {
   const { slug, catalogo, currentStep, setCurrentStep, bookingData, setClientData, setObservaciones, calculateTotal } = useBooking();
-  const [loading, setLoading] = useState(false);
-  const [codigoReserva, setCodigoReserva] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { submit, loading, error, codigoReserva } = useBookingSubmit(slug);
   const catTipoDoc = catalogo.tipos_documento;
 
   const [clientForm, setClientForm] = useState<BookingCliente>(
@@ -50,92 +47,17 @@ export default function Step4Client() {
     setClientForm(prev => ({ ...prev, documento: rawValue }));
   };
 
-  const handleFinalize = async () => {
-    const tipoDoc = String(clientForm.fk_tipo_documento ?? '');
-
-    // Basic validation — el correo quedó opcional, el resto sigue obligatorio.
-    if (!clientForm.razon_social || !tipoDoc || !clientForm.documento || !clientForm.telefono) {
-      setError("Por favor completa los campos obligatorios (*).");
-      return;
-    }
-
-    const documentoError = validarDocumentoPorTipo(clientForm.documento, tipoDoc);
-    if (documentoError) {
-      setError(documentoError);
-      return;
-    }
-
-    if (clientForm.email.trim()) {
-      const emailError = validarEmail(clientForm.email.trim());
-      if (emailError) {
-        setError(emailError);
-        return;
-      }
-    }
-
-    const fijo = separarTelefono(clientForm.telefono, 'fijo');
-    const telefonoError =
-      validarCodigoPais(fijo.codigo, fijo.numero) || validarNumero(fijo.numero, fijo.codigo, 'fijo');
-    if (telefonoError) {
-      setError(`Teléfono: ${telefonoError}`);
-      return;
-    }
-
-    const movil = separarTelefono(clientForm.celular, 'celular');
-    const celularError =
-      validarCodigoPais(movil.codigo, movil.numero) || validarNumero(movil.numero, movil.codigo, 'celular');
-    if (celularError) {
-      setError(`Celular: ${celularError}`);
-      return;
-    }
-
-    setClientData(clientForm);
-    setObservaciones(obs);
-    setLoading(true);
-    setError(null);
-
-    // RUC no es un fk_tipo_documento real de la tabla de referencia (mismo
-    // criterio que Clientes/Huéspedes): se manda null, y el RPC
-    // fn_registrar_reserva_landing lo castea a bigint tal cual llega. Mandar
-    // el literal 'RUC' rompería ese cast en el backend.
-    const clienteParaEnviar: BookingCliente = {
-      ...clientForm,
-      fk_tipo_documento: (tipoDoc === RUC_TIPO_DOC_VALUE ? null : Number(tipoDoc)) as any,
-    };
-
-    // Mismo saneo para cada huésped cargado en el paso anterior (Step3Guests
-    // ofrece el mismo select con RUC).
-    const detallesParaEnviar = (bookingData.detalles || []).map(det => ({
-      ...det,
-      huespedes: (det.huespedes || []).map(h => ({
-        ...h,
-        fk_tipo_documento: (String(h.fk_tipo_documento) === RUC_TIPO_DOC_VALUE
-          ? null
-          : Number(h.fk_tipo_documento)) as any,
-      })),
-    }));
-
-    const payload: BookingPayload = {
-      fecha_entrada: bookingData.fecha_entrada as string,
-      fecha_salida: bookingData.fecha_salida as string,
-      origen: "WEB",
+  const handleFinalize = () =>
+    submit({
+      form: clientForm,
       observaciones: obs,
-      cliente: clienteParaEnviar,
-      detalles: detallesParaEnviar
-    };
-
-    try {
-      const result = await LandingService.submitReserva(slug, payload);
-      setCodigoReserva(result.codigo_reserva ?? '');
-    } catch (err: any) {
-      console.error("Error al procesar reserva", err);
-      // Extraemos el mensaje de error de la BD si está disponible
-      const errorMsg = err.message || "Ocurrió un error al procesar tu reserva. Intenta nuevamente.";
-      setError(errorMsg);
-    } finally {
-      setLoading(false);
-    }
-  };
+      bookingData,
+      // Store the raw form (RUC stays as the 'RUC' string) once validation passes.
+      onValidated: () => {
+        setClientData(clientForm);
+        setObservaciones(obs);
+      },
+    });
 
   if (codigoReserva !== null) {
     return (
