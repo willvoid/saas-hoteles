@@ -1957,8 +1957,14 @@ body::after {
 }
 
 /* Selector de hoteles (/hoteles) */
+/* html, body y #root no hacen scroll (lo maneja cada vista) y #root centra su
+   contenido: la pagina ocupa todo el viewport y scrollea por su cuenta. */
 .hotel-select-page {
-  min-height: 100vh;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 48px 24px;
   box-sizing: border-box;
   background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
@@ -1966,8 +1972,19 @@ body::after {
 }
 
 .hotel-select-inner {
-  max-width: 1040px;
+  width: 100%;
+  max-width: 1120px;
   margin: 0 auto;
+}
+
+@media (max-width: 600px) {
+  .hotel-select-page {
+    padding: 28px 16px;
+  }
+
+  .hotel-select-title {
+    font-size: 24px;
+  }
 }
 
 .hotel-select-header {
@@ -1993,8 +2010,9 @@ body::after {
 
 .hotel-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 24px;
+  /* En fila y con salto de linea: ~4 por fila en escritorio, 1 en el movil. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 20px;
 }
 
 .hotel-card {
