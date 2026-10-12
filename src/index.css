@@ -598,6 +598,30 @@ body::after {
   color: white;
 }
 
+/* Cambiar de hotel: misma forma que logout, sin el tono destructivo. */
+.switch-hotel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 12px;
+  background: var(--glass-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.switch-hotel-btn:hover {
+  background: rgb(var(--primary-rgb) / 0.15);
+  color: var(--text-primary);
+}
+
 /* Dashboard Content Area */
 .dashboard-content {
   flex: 1;
@@ -1930,6 +1954,155 @@ body::after {
 .room-card.is-disabled:hover {
   transform: none;
   box-shadow: 0 4px 30px rgb(var(--black-rgb) / 0.2);
+}
+
+/* Selector de hoteles (/hoteles) */
+.hotel-select-page {
+  min-height: 100vh;
+  padding: 48px 24px;
+  box-sizing: border-box;
+  background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+  color: var(--text-primary);
+}
+
+.hotel-select-inner {
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.hotel-select-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+}
+
+.hotel-select-title {
+  margin: 0 0 6px;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.hotel-select-subtitle {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+.hotel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 24px;
+}
+
+.hotel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 190px;
+  padding: 24px;
+  box-sizing: border-box;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  backdrop-filter: blur(20px);
+  transition: all 0.3s ease;
+}
+
+.hotel-card:hover:not(:disabled) {
+  transform: translateY(-5px);
+  box-shadow: 0 15px 30px -10px rgb(var(--black-rgb) / 0.3);
+  border-color: rgb(var(--white-rgb) / 0.2);
+}
+
+.hotel-card:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.hotel-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.hotel-card--active {
+  border-color: rgb(var(--primary-rgb) / 0.6);
+}
+
+.hotel-card--add {
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  border-style: dashed;
+}
+
+.hotel-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  color: var(--primary-light);
+  background: rgb(var(--primary-rgb) / 0.15);
+}
+
+.hotel-card-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.hotel-card-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.hotel-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.hotel-badge {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  border: 1px solid var(--glass-border);
+}
+
+.hotel-badge--ok {
+  color: var(--success-light);
+  background: rgb(var(--success-rgb) / 0.12);
+  border-color: rgb(var(--success-rgb) / 0.3);
+}
+
+.hotel-badge--warn {
+  color: var(--warning-light);
+  background: rgb(var(--warning-rgb) / 0.12);
+  border-color: rgb(var(--warning-rgb) / 0.3);
+}
+
+.hotel-badge--bad {
+  color: var(--error-light);
+  background: rgb(var(--error-rgb) / 0.12);
+  border-color: rgb(var(--error-rgb) / 0.3);
+}
+
+.hotel-badge--info {
+  color: var(--primary-light);
+  background: rgb(var(--primary-rgb) / 0.12);
+  border-color: rgb(var(--primary-rgb) / 0.3);
 }
 /* Ticket imprimible: sólo el ticket se ve al imprimir, el resto de la app se oculta. */
 @media print {

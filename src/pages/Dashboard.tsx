@@ -18,7 +18,8 @@ import {
   Store,
   Building,
   Package,
-  BarChart3
+  BarChart3,
+  ArrowLeftRight
 } from 'lucide-react';
 import ManageClients from './ManageClients';
 import ManageReservations from './ManageReservations';
@@ -63,9 +64,11 @@ import { COLORS, tint } from '../constants/colors';
 interface DashboardProps {
   user: User;
   onLogout: () => void;
+  // Back to the hotel selector. An open caja turn stays open in this hotel.
+  onSwitchHotel?: () => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
+const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) => {
   // Rol normalizado del usuario logueado: define qué módulos puede ver
   const role = normalizeRole(user.cargo);
 
@@ -550,6 +553,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
               onVerHabitacion={() => navigateTo('estado-limpieza')}
             />
           </div>
+          {onSwitchHotel && (
+            <button className="switch-hotel-btn" onClick={onSwitchHotel}>
+              <ArrowLeftRight size={18} />
+              <span>Cambiar de hotel</span>
+            </button>
+          )}
           <button className="logout-btn" onClick={handleLogoutClick}>
             <LogOut size={18} />
             <span>Cerrar Sesión</span>
