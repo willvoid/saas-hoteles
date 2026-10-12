@@ -88,3 +88,12 @@ where not exists (select 1 from public.modo_pago m where m.descripcion = v.descr
 insert into public.motivos_emision (descripcion)
 select 'Anulación'
 where not exists (select 1 from public.motivos_emision where descripcion = 'Anulación');
+
+-- Tipos de operacion (B2B, B2C, B2G, B2F). El frontend (CreateClient.tsx) crea
+-- los clientes con fk_tipo_operacion = 2 por defecto, que debe corresponder a
+-- B2C: en una base vacia los ids de identidad salen 1..4 en este orden. Si
+-- cargaste catalogos reales del proyecto anterior, no uses este bloque.
+insert into public.tipo_operacion (codigo_tipo_op)
+select v.codigo
+from (values ('B2B'), ('B2C'), ('B2G'), ('B2F')) as v(codigo)
+where not exists (select 1 from public.tipo_operacion t where t.codigo_tipo_op = v.codigo);
