@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { X } from 'lucide-react';
+import { tint } from '../constants/colors';
 
 interface ModalProps {
   isOpen: boolean;
@@ -33,7 +34,7 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 500, footer
       style={{
         position: 'fixed',
         inset: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.65)',
+        backgroundColor: tint('black', 0.65),
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
         display: 'flex',
@@ -47,12 +48,12 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 500, footer
     >
       <div 
         style={{
-          background: 'rgba(15, 23, 42, 0.95)',
+          background: tint('bgStart', 0.95),
           border: '1px solid var(--glass-border)',
           borderRadius: '20px',
           width: '100%',
           maxWidth: `${maxWidth}px`,
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+          boxShadow: `0 25px 50px -12px ${tint('black', 0.5)}`,
           overflow: 'hidden',
           animation: 'fadeIn 0.25s ease-out',
           display: 'flex',

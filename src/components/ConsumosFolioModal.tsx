@@ -6,6 +6,7 @@ import { esCargoDeAlojamiento } from '../utils/alojamiento';
 import { enfocarCampo } from '../utils/formFocus';
 import { formatGs } from '../utils/currency';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 function ModalPortal({ children }: { children: React.ReactNode }) {
   return ReactDOM.createPortal(children, document.body);
@@ -255,11 +256,11 @@ export default function ConsumosFolioModal({
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{
                   width: '36px', height: '36px', borderRadius: '8px',
-                  background: 'rgba(59, 130, 246, 0.15)',
-                  border: '1px solid rgba(59, 130, 246, 0.3)',
+                  background: tint('primary', 0.15),
+                  border: `1px solid ${tint('primary', 0.3)}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}>
-                  <ShoppingCart size={18} color="#3b82f6" />
+                  <ShoppingCart size={18} color={COLORS.primary} />
                 </div>
                 <div>
                   <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Consumos del folio</h3>
@@ -287,9 +288,9 @@ export default function ConsumosFolioModal({
                     gap: '10px',
                     padding: '12px 14px',
                     borderRadius: '10px',
-                    background: 'rgba(245, 158, 11, 0.1)',
-                    border: '1px solid rgba(245, 158, 11, 0.3)',
-                    color: '#fbbf24',
+                    background: tint('warning', 0.1),
+                    border: `1px solid ${tint('warning', 0.3)}`,
+                    color: COLORS.warningLight,
                     fontSize: '13px',
                   }}
                 >
@@ -361,14 +362,14 @@ export default function ConsumosFolioModal({
                           style={{
                             borderTop: '1px solid var(--glass-border)',
                             // Resalta la línea que se está por reemplazar.
-                            background: lineaACambiar === idx ? 'rgba(59, 130, 246, 0.1)' : undefined,
+                            background: lineaACambiar === idx ? tint('primary', 0.1) : undefined,
                           }}
                         >
                           <td style={{ padding: '8px', minWidth: 200 }}>
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                               <span>{l.nombre}</span>
                               {l.idCargo == null && (
-                                <span style={{ fontSize: 11, color: '#34d399' }}>nuevo</span>
+                                <span style={{ fontSize: 11, color: COLORS.successLight }}>nuevo</span>
                               )}
                               <button
                                 className="btn-action blue"
@@ -422,18 +423,18 @@ export default function ConsumosFolioModal({
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 padding: '14px 16px',
-                background: 'rgba(16, 185, 129, 0.08)',
-                border: '1px solid rgba(16, 185, 129, 0.25)',
+                background: tint('success', 0.08),
+                border: `1px solid ${tint('success', 0.25)}`,
                 borderRadius: '10px',
               }}>
                 <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>{totalLabel}</span>
-                <span style={{ fontWeight: 700, fontSize: '20px', color: '#10b981' }}>
+                <span style={{ fontWeight: 700, fontSize: '20px', color: COLORS.success }}>
                   {formatGs(totalLineas)}
                 </span>
               </div>
 
               {cargosAQuitar.length > 0 && (
-                <p style={{ margin: 0, fontSize: 13, color: '#fca5a5' }}>
+                <p style={{ margin: 0, fontSize: 13, color: COLORS.errorLighter }}>
                   {cargosAQuitar.length} consumo(s) se van a eliminar del folio al confirmar.
                 </p>
               )}
@@ -465,14 +466,14 @@ export default function ConsumosFolioModal({
                 width: '64px',
                 height: '64px',
                 borderRadius: '50%',
-                background: 'rgba(239, 68, 68, 0.15)',
-                border: '2px solid rgba(239, 68, 68, 0.3)',
+                background: tint('error', 0.15),
+                border: `2px solid ${tint('error', 0.3)}`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 margin: '0 auto 20px',
               }}>
-                <Trash2 size={28} style={{ color: '#f87171' }} />
+                <Trash2 size={28} style={{ color: COLORS.errorLight }} />
               </div>
 
               <h3 style={{ margin: '0 0 10px', fontSize: '20px', fontWeight: 700 }}>
@@ -492,7 +493,7 @@ export default function ConsumosFolioModal({
                 </button>
                 <button
                   className="btn-modal-submit"
-                  style={{ flex: 1, backgroundColor: '#ef4444' }}
+                  style={{ flex: 1, backgroundColor: COLORS.error }}
                   onClick={handleQuitarLinea}
                 >
                   Sí, quitar

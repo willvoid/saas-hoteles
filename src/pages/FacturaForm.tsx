@@ -16,6 +16,7 @@ import { formatGs } from '../utils/currency';
 import { enfocarPrimerError } from '../utils/formFocus';
 import type { LineaFactura, Turno, ConceptoConIva, ModoPagoItem, FolioCerradoItem } from '../types/factura';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 /**
  * Cómo está guardado un cargo en el folio. Se conserva aparte de las líneas de
@@ -49,7 +50,7 @@ const panelStyle: React.CSSProperties = {
 const ORDEN_CAMPOS = ['cliente', 'folio-selector', 'items', 'modo-pago', 'efectivo'] as const;
 
 const errorEnCampo: React.CSSProperties = {
-  color: '#f87171',
+  color: COLORS.errorLight,
   fontSize: 12,
   marginTop: 4,
   display: 'block',
@@ -585,7 +586,7 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
     return (
       <ModuleLayout title="Nueva factura" description="Facturación interna" actions={backAction}>
         <div style={{ ...panelStyle, maxWidth: 480, textAlign: 'center' }}>
-          <Wallet size={32} color="#94a3b8" style={{ margin: '0 auto 12px' }} />
+          <Wallet size={32} color={COLORS.textSecondary} style={{ margin: '0 auto 12px' }} />
           <p style={{ marginBottom: 16 }}>
             Necesitás un turno de caja abierto para poder facturar.
           </p>
@@ -708,9 +709,9 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
                 gap: 10,
                 padding: '12px 14px',
                 borderRadius: 10,
-                background: 'rgba(245, 158, 11, 0.1)',
-                border: '1px solid rgba(245, 158, 11, 0.3)',
-                color: '#fbbf24',
+                background: tint('warning', 0.1),
+                border: `1px solid ${tint('warning', 0.3)}`,
+                color: COLORS.warningLight,
                 fontSize: 13,
                 marginBottom: 16,
               }}
@@ -842,7 +843,7 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
               <dt style={{ color: 'var(--text-secondary)' }}>IVA</dt>
               <dd style={{ margin: 0, textAlign: 'right' }}>{formatGs(totales.total_iva)}</dd>
               <dt style={{ fontWeight: 700, fontSize: 18, paddingTop: 8 }}>Total</dt>
-              <dd style={{ margin: 0, textAlign: 'right', fontWeight: 700, fontSize: 18, paddingTop: 8, color: '#34d399' }}>
+              <dd style={{ margin: 0, textAlign: 'right', fontWeight: 700, fontSize: 18, paddingTop: 8, color: COLORS.successLight }}>
                 {formatGs(totales.total_general)}
               </dd>
               {modoEsEfectivo && (

@@ -5,6 +5,7 @@ import { alojamientoService } from '../services/alojamientoService';
 import { enfocarPrimerError } from '../utils/formFocus';
 import { INITIAL_ESTADOS, esReservaCerrada, type ReservaEstado } from '../utils/reservaEstado';
 import '../index.css';
+import { COLORS } from '../constants/colors';
 
 /** Campos del formulario, para poder conservarlos al ir y volver de Clientes. */
 export interface ReservaBorrador {
@@ -380,7 +381,7 @@ export default function ReservationForm({
 
           <div className="input-group">
             <label htmlFor="fk_cliente">Cliente / Huésped *</label>
-            <div id="fk_cliente" style={{ border: formErrors.fk_cliente ? '1px solid #ef4444' : 'none', borderRadius: '6px' }}>
+            <div id="fk_cliente" style={{ border: formErrors.fk_cliente ? `1px solid ${COLORS.error}` : 'none', borderRadius: '6px' }}>
               <AutocompleteClientes
                 clients={clients}
                 value={formData.fk_cliente}

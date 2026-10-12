@@ -5,6 +5,7 @@ import { DataTable, Column } from '../components/DataTable';
 import { ModuleLayout } from '../components/ModuleLayout';
 import { Image as ImageIcon } from 'lucide-react';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 interface ManageTipoHabitacionProps {
   onBack: () => void;
@@ -122,7 +123,7 @@ export default function ManageTipoHabitacion({
                 <ImageIcon size={18} />
               </div>
             )}
-            <div style={{ fontWeight: 'bold', fontSize: '16px', color: '#60a5fa' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '16px', color: COLORS.primaryLight }}>
               {tipo.nombre}
             </div>
           </div>
@@ -155,9 +156,9 @@ export default function ManageTipoHabitacion({
               width: 'auto', 
               padding: '6px 12px', 
               fontSize: '13px', 
-              background: 'rgba(59, 130, 246, 0.2)', 
-              color: '#60a5fa',
-              border: '1px solid rgba(59, 130, 246, 0.4)'
+              background: tint('primary', 0.2), 
+              color: COLORS.primaryLight,
+              border: `1px solid ${tint('primary', 0.4)}`
             }}
           >
             Editar

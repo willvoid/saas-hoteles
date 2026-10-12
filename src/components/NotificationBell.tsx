@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Bell, CheckCheck, DoorClosed } from 'lucide-react';
 import { NotificacionRow } from '../services/notificacionService';
+import { COLORS, tint } from '../constants/colors';
 
 interface NotificationBellProps {
   items: NotificacionRow[];
@@ -129,8 +130,8 @@ export function NotificationBell({
               height: '16px',
               padding: '0 4px',
               borderRadius: '999px',
-              background: '#ef4444',
-              color: '#fff',
+              background: COLORS.error,
+              color: COLORS.white,
               fontSize: '10px',
               fontWeight: 700,
               display: 'flex',
@@ -155,10 +156,10 @@ export function NotificationBell({
             width: `${panelPosition.width}px`,
             maxHeight: `${panelPosition.maxHeight}px`,
             overflowY: 'auto',
-            background: 'rgba(15, 23, 42, 0.98)',
+            background: tint('bgStart', 0.98),
             border: '1px solid var(--glass-border)',
             borderRadius: '14px',
-            boxShadow: '0 12px 32px rgba(0,0,0,0.4)',
+            boxShadow: `0 12px 32px ${tint('black', 0.4)}`,
             zIndex: 200
           }}
         >
@@ -206,7 +207,7 @@ export function NotificationBell({
                   width: '100%',
                   textAlign: 'left',
                   padding: '12px 14px',
-                  background: n.leida ? 'transparent' : 'rgba(59, 130, 246, 0.08)',
+                  background: n.leida ? 'transparent' : tint('primary', 0.08),
                   border: 'none',
                   borderBottom: '1px solid var(--glass-border)',
                   cursor: 'pointer'
@@ -216,7 +217,7 @@ export function NotificationBell({
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     {!n.leida && (
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: COLORS.primary, flexShrink: 0 }} />
                     )}
                     <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: n.leida ? 400 : 600 }}>
                       {n.titulo}

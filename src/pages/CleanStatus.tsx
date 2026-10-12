@@ -20,6 +20,7 @@ import { FilterChips } from '../components/FilterChips';
 import { StatusTabs } from '../components/StatusTabs';
 import { StatusBadge } from '../components/StatusBadge';
 import { getStatusStyle } from '../components/roomStatus';
+import { COLORS, tint } from '../constants/colors';
 
 // Portal helper: renders children directly on document.body so position:fixed
 // is always relative to the viewport, not any scrollable ancestor.
@@ -475,11 +476,11 @@ export default function CleanStatus({
       <StatusTabs
         tabs={[
           { key: 'todos', label: 'Todas', count: roomCounts.todos },
-          { key: 'limpia', label: 'Limpias', color: '#10b981', count: roomCounts.limpia },
-          { key: 'sucia', label: 'Sucias', color: '#f97316', count: roomCounts.sucia },
-          { key: 'en_limpieza', label: 'En Limpieza', color: '#3b82f6', count: roomCounts.en_limpieza },
-          { key: 'ocupada', label: 'Ocupadas', color: '#8b5cf6', count: roomCounts.ocupada },
-          { key: 'bloqueada', label: 'Bloqueadas', color: '#ef4444', count: roomCounts.bloqueada }
+          { key: 'limpia', label: 'Limpias', color: COLORS.success, count: roomCounts.limpia },
+          { key: 'sucia', label: 'Sucias', color: COLORS.orange, count: roomCounts.sucia },
+          { key: 'en_limpieza', label: 'En Limpieza', color: COLORS.primary, count: roomCounts.en_limpieza },
+          { key: 'ocupada', label: 'Ocupadas', color: COLORS.purple, count: roomCounts.ocupada },
+          { key: 'bloqueada', label: 'Bloqueadas', color: COLORS.error, count: roomCounts.bloqueada }
         ]}
         value={statusFilter}
         onChange={setStatusFilter}
@@ -493,7 +494,7 @@ export default function CleanStatus({
         </div>
       ) : filteredRooms.length === 0 ? (
         <div style={{
-          background: 'rgba(0, 0, 0, 0.15)',
+          background: tint('black', 0.15),
           border: '1px dashed var(--glass-border)',
           borderRadius: '20px',
           padding: '80px 20px',
@@ -531,8 +532,8 @@ export default function CleanStatus({
                 style={{
                   '--status-glow-color': badgeBg,
                   ...(effectiveStatus === 'Bloqueada' ? {
-                    background: 'rgba(239, 68, 68, 0.04)',
-                    borderColor: 'rgba(239, 68, 68, 0.2)'
+                    background: tint('error', 0.04),
+                    borderColor: tint('error', 0.2)
                   } : {})
                 } as React.CSSProperties}
               >
@@ -554,9 +555,9 @@ export default function CleanStatus({
                   </div>
                   
                   {effectiveStatus === 'En Limpieza' && employeeName && (
-                    <div className="info-row" style={{ color: '#60a5fa' }}>
+                    <div className="info-row" style={{ color: COLORS.primaryLight }}>
                       <User size={14} />
-                      <span>Limpieza por: <span className="info-value" style={{ color: '#fff' }}>{employeeName}</span></span>
+                      <span>Limpieza por: <span className="info-value" style={{ color: COLORS.white }}>{employeeName}</span></span>
                     </div>
                   )}
 
@@ -567,7 +568,7 @@ export default function CleanStatus({
 
                   {/* Active blockage summary (compact indicator) */}
                   {activeBlock && (
-                    <div className="info-row" style={{ color: '#fca5a5' }}>
+                    <div className="info-row" style={{ color: COLORS.errorLighter }}>
                       <AlertTriangle size={14} />
                       <span>Bloqueo: <strong className="blockage-reason">{activeBlock.motivo}</strong></span>
                     </div>
@@ -659,7 +660,7 @@ export default function CleanStatus({
                       ))}
                     </select>
                     {employees.length === 0 && (
-                      <span style={{ fontSize: '12px', color: '#fbbf24', marginTop: '4px', display: 'block' }}>
+                      <span style={{ fontSize: '12px', color: COLORS.warningLight, marginTop: '4px', display: 'block' }}>
                         No hay usuarios con cargo de limpiador activos.
                       </span>
                     )}
@@ -782,7 +783,7 @@ export default function CleanStatus({
                 className="btn-modal-submit"
                 onClick={handleSaveBlock}
                 disabled={loading}
-                style={{ backgroundColor: '#ef4444' }}
+                style={{ backgroundColor: COLORS.error }}
               >
                 Registrar Bloqueo
               </button>
@@ -799,12 +800,12 @@ export default function CleanStatus({
         return (
           <ModalPortal>
             <div className="modal-backdrop-glow">
-            <div className="modal-box-glow" style={{ borderLeft: `4px solid ${isEditingBlock ? '#f59e0b' : '#ef4444'}`, maxWidth: '520px', width: '95%' }}>
+            <div className="modal-box-glow" style={{ borderLeft: `4px solid ${isEditingBlock ? COLORS.warning : COLORS.error}`, maxWidth: '520px', width: '95%' }}>
               <div className="modal-header-row">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   {isEditingBlock
-                    ? <Edit2 size={22} style={{ color: '#fbbf24' }} />
-                    : <AlertTriangle size={22} style={{ color: '#f87171' }} />}
+                    ? <Edit2 size={22} style={{ color: COLORS.warningLight }} />
+                    : <AlertTriangle size={22} style={{ color: COLORS.errorLight }} />}
                   <div>
                     <h3 style={{ margin: 0, fontSize: '18px' }}>
                       Habitación #{viewingBlockageRoom.numero_habitacion}
@@ -876,11 +877,11 @@ export default function CleanStatus({
 
                   <div style={{
                     padding: '10px 14px',
-                    background: 'rgba(245,158,11,0.08)',
-                    border: '1px solid rgba(245,158,11,0.25)',
+                    background: tint('warning', 0.08),
+                    border: `1px solid ${tint('warning', 0.25)}`,
                     borderRadius: '10px',
                     fontSize: '13px',
-                    color: '#fbbf24'
+                    color: COLORS.warningLight
                   }}>
                     💡 Puedes extender la fecha de fin sin necesidad de desbloquear la habitación.
                   </div>
@@ -888,10 +889,10 @@ export default function CleanStatus({
               ) : (
                 /* ── VIEW MODE ── */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', margin: '16px 0' }}>
-                  <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '12px', padding: '16px', border: '1px solid var(--glass-border)' }}>
+                  <div style={{ background: tint('white', 0.03), borderRadius: '12px', padding: '16px', border: '1px solid var(--glass-border)' }}>
                     <div style={{ marginBottom: '12px' }}>
                       <span style={{ fontSize: '13px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Motivo del Bloqueo</span>
-                      <strong style={{ fontSize: '16px', color: '#fca5a5' }}>{activeBlock.motivo}</strong>
+                      <strong style={{ fontSize: '16px', color: COLORS.errorLighter }}>{activeBlock.motivo}</strong>
                     </div>
 
                     {activeBlock.observaciones && (
@@ -903,14 +904,14 @@ export default function CleanStatus({
                       </div>
                     )}
 
-                    <div style={{ display: 'flex', gap: '20px', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ display: 'flex', gap: '20px', marginTop: '16px', paddingTop: '12px', borderTop: `1px solid ${COLORS.glassBg}` }}>
                       <div>
                         <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>Fecha de Inicio</span>
                         <span style={{ fontSize: '13px', fontWeight: 500 }}>{new Date(activeBlock.fecha_inicio).toLocaleDateString()}</span>
                       </div>
                       <div>
                         <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>Fecha de Fin</span>
-                        <span style={{ fontSize: '13px', fontWeight: 500, color: activeBlock.fecha_fin ? 'var(--text-primary)' : '#94a3b8' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 500, color: activeBlock.fecha_fin ? 'var(--text-primary)' : COLORS.textSecondary }}>
                           {activeBlock.fecha_fin ? new Date(activeBlock.fecha_fin).toLocaleDateString() : 'Indefinida'}
                         </span>
                       </div>
@@ -933,7 +934,7 @@ export default function CleanStatus({
                       className="btn-modal-submit"
                       onClick={() => handleUpdateBlock(activeBlock.id_bloqueo)}
                       disabled={loading || !editBlockReason.trim()}
-                      style={{ backgroundColor: '#f59e0b', color: '#000' }}
+                      style={{ backgroundColor: COLORS.warning, color: COLORS.black }}
                     >
                       {loading ? 'Guardando...' : 'Guardar Cambios'}
                     </button>
@@ -963,7 +964,7 @@ export default function CleanStatus({
                         setIsEditingBlock(false);
                         handleUnblock(roomToUnblock, blockToUnblock);
                       }}
-                      style={{ backgroundColor: '#ef4444' }}
+                      style={{ backgroundColor: COLORS.error }}
                     >
                       <Unlock size={14} style={{ marginRight: '4px' }} /> Desbloquear
                     </button>
@@ -994,14 +995,14 @@ export default function CleanStatus({
               width: '64px',
               height: '64px',
               borderRadius: '50%',
-              background: 'rgba(239, 68, 68, 0.15)',
-              border: '2px solid rgba(239, 68, 68, 0.3)',
+              background: tint('error', 0.15),
+              border: `2px solid ${tint('error', 0.3)}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               margin: '0 auto 20px',
             }}>
-              <Unlock size={28} style={{ color: '#f87171' }} />
+              <Unlock size={28} style={{ color: COLORS.errorLight }} />
             </div>
 
             <h3 style={{ margin: '0 0 10px', fontSize: '20px', fontWeight: 700 }}>
@@ -1022,10 +1023,10 @@ export default function CleanStatus({
             </p>
 
             <p style={{
-              color: '#fca5a5',
+              color: COLORS.errorLighter,
               fontSize: '13px',
-              background: 'rgba(239,68,68,0.08)',
-              border: '1px solid rgba(239,68,68,0.2)',
+              background: tint('error', 0.08),
+              border: `1px solid ${tint('error', 0.2)}`,
               borderRadius: '10px',
               padding: '10px 14px',
               marginBottom: '24px'
@@ -1043,7 +1044,7 @@ export default function CleanStatus({
               </button>
               <button
                 className="btn-modal-submit"
-                style={{ flex: 1, backgroundColor: '#ef4444' }}
+                style={{ flex: 1, backgroundColor: COLORS.error }}
                 onClick={executeUnblock}
                 disabled={loading}
               >

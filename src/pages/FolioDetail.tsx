@@ -12,6 +12,7 @@ import { ReservationService } from '../services/reservationService';
 import { normalizeRole } from '../utils/permissions';
 import { ArrowLeft, Plus, Wallet, Receipt, AlertTriangle, BedDouble, Unlock, Lock } from 'lucide-react';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 function ModalPortal({ children }: { children: React.ReactNode }) {
   return ReactDOM.createPortal(children, document.body);
@@ -423,7 +424,7 @@ export default function FolioDetail({
     { header: 'Concepto', render: (c) => <span style={{ fontWeight: 600 }}>{c.concepto?.nombre || `ID: ${c.fk_concepto}`}</span> },
     { header: 'Cant.', align: 'center', render: (c) => c.cantidad },
     { header: 'P. Unit.', align: 'right', render: (c) => formatGs(c.monto_unitario) },
-    { header: 'Total', align: 'right', render: (c) => <span style={{ fontWeight: 700, color: '#10b981' }}>{formatGs(c.monto_total)}</span> },
+    { header: 'Total', align: 'right', render: (c) => <span style={{ fontWeight: 700, color: COLORS.success }}>{formatGs(c.monto_total)}</span> },
   ];
 
   const activeCargos = cargosConsumo;
@@ -444,18 +445,18 @@ export default function FolioDetail({
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
-            background: 'rgba(245, 158, 11, 0.1)',
-            border: '1px solid rgba(245, 158, 11, 0.3)',
+            background: tint('warning', 0.1),
+            border: `1px solid ${tint('warning', 0.3)}`,
             borderRadius: '10px',
             padding: '8px 16px',
           }}>
-            <Wallet size={18} color="#f59e0b" />
-            <span style={{ fontWeight: 700, fontSize: '20px', color: '#f59e0b' }}>
+            <Wallet size={18} color={COLORS.warning} />
+            <span style={{ fontWeight: 700, fontSize: '20px', color: COLORS.warning }}>
               {formatGs(folio.total_acumulado || 0)}
             </span>
             <span
               className="status-badge"
-              style={{ '--badge-color': folio.estado === 'abierto' ? '#10b981' : '#94a3b8', marginLeft: '6px' } as React.CSSProperties}
+              style={{ '--badge-color': folio.estado === 'abierto' ? COLORS.success : COLORS.textSecondary, marginLeft: '6px' } as React.CSSProperties}
             >
               {folio.estado.toUpperCase()}
             </span>
@@ -504,7 +505,7 @@ export default function FolioDetail({
       <div className="module-container" style={{ padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', gap: '12px', flexWrap: 'wrap' }}>
           <h3 style={{ margin: 0, fontSize: '18px', lineHeight: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <BedDouble size={18} color="#60a5fa" /> Alojamiento
+            <BedDouble size={18} color={COLORS.primaryLight} /> Alojamiento
           </h3>
           <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
             {folio.reserva?.fecha_entrada && folio.reserva?.fecha_salida
@@ -556,7 +557,7 @@ export default function FolioDetail({
                   <td colSpan={6} style={{ padding: '12px 8px', textAlign: 'right', color: 'var(--text-secondary)' }}>
                     Total alojamiento
                   </td>
-                  <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 16, color: '#10b981' }}>
+                  <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 16, color: COLORS.success }}>
                     {formatGs(desgloseAlojamiento.total)}
                   </td>
                 </tr>
@@ -572,8 +573,8 @@ export default function FolioDetail({
             style={{
               display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 16,
               padding: '12px 14px', borderRadius: 10,
-              background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)',
-              color: '#fbbf24', fontSize: 13,
+              background: tint('warning', 0.1), border: `1px solid ${tint('warning', 0.3)}`,
+              color: COLORS.warningLight, fontSize: 13,
             }}
           >
             <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -649,14 +650,14 @@ export default function FolioDetail({
                 width: '64px',
                 height: '64px',
                 borderRadius: '50%',
-                background: 'rgba(59, 130, 246, 0.15)',
-                border: '2px solid rgba(59, 130, 246, 0.3)',
+                background: tint('primary', 0.15),
+                border: `2px solid ${tint('primary', 0.3)}`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 margin: '0 auto 20px',
               }}>
-                <Unlock size={28} style={{ color: '#60a5fa' }} />
+                <Unlock size={28} style={{ color: COLORS.primaryLight }} />
               </div>
 
               <h3 style={{ margin: '0 0 10px', fontSize: '20px', fontWeight: 700 }}>
@@ -699,14 +700,14 @@ export default function FolioDetail({
                 width: '64px',
                 height: '64px',
                 borderRadius: '50%',
-                background: 'rgba(148, 163, 184, 0.15)',
-                border: '2px solid rgba(148, 163, 184, 0.3)',
+                background: tint('textSecondary', 0.15),
+                border: `2px solid ${tint('textSecondary', 0.3)}`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 margin: '0 auto 20px',
               }}>
-                <Lock size={28} style={{ color: '#94a3b8' }} />
+                <Lock size={28} style={{ color: COLORS.textSecondary }} />
               </div>
 
               <h3 style={{ margin: '0 0 10px', fontSize: '20px', fontWeight: 700 }}>

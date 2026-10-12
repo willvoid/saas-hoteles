@@ -24,6 +24,7 @@ import type { Reserva, DetalleReserva, HuespedReserva, HistorialEstancia, Tarifa
 import type { User } from '../types/user';
 import { ArrowLeft, BedDouble, Users, ClipboardList, FileText, Plus, Trash2, Pencil, UserCheck, Clock, ChevronDown } from 'lucide-react';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 /** Room row for the picker grid: RoomCardData plus range-scoped occupancy. */
 interface PickerRoom extends RoomCardData {
@@ -852,11 +853,11 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
 
   const getStatusColor = (e: string) => {
     switch (e?.toLowerCase()) {
-      case 'confirmada': case 'check-in': return '#10b981';
-      case 'pendiente': return '#f59e0b';
-      case 'cancelada': return '#ef4444';
-      case 'check-out': return '#6366f1';
-      default: return '#94a3b8';
+      case 'confirmada': case 'check-in': return COLORS.success;
+      case 'pendiente': return COLORS.warning;
+      case 'cancelada': return COLORS.error;
+      case 'check-out': return COLORS.indigo;
+      default: return COLORS.textSecondary;
     }
   };
 
@@ -877,7 +878,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
     { header: 'Adultos', render: (d) => d.cantidad_adultos, align: 'center' },
     { header: 'Niños', render: (d) => d.cantidad_ninos, align: 'center' },
     { header: 'Precio', render: (d) => <span style={{ fontWeight: 600 }}>{formatGs(d.precio_unitario)}</span> },
-    { header: 'Subtotal', render: (d) => <span style={{ fontWeight: 700, color: '#10b981' }}>{formatGs(d.subtotal)}</span> },
+    { header: 'Subtotal', render: (d) => <span style={{ fontWeight: 700, color: COLORS.success }}>{formatGs(d.subtotal)}</span> },
     {
       header: '', align: 'center', render: (d) => soloLectura ? (
         <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>—</span>
@@ -889,7 +890,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
             style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: '30px', height: '30px', borderRadius: '8px',
-              border: '1px solid var(--glass-border)', background: 'rgba(255,255,255,0.05)',
+              border: '1px solid var(--glass-border)', background: COLORS.glassBg,
               color: 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.2s ease',
             }}
           >
@@ -937,13 +938,13 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
                 onClick={() => handleEstadoAction(target)}
                 disabled={changingEstado}
                 className={copy.variant === 'danger' ? 'btn-ghost' : 'btn-primary-sm'}
-                style={copy.variant === 'danger' ? { color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' } : undefined}
+                style={copy.variant === 'danger' ? { color: COLORS.error, borderColor: tint('error', 0.4) } : undefined}
               >
                 {copy.actionLabel}
               </button>
             );
           })}
-          <span style={{ fontWeight: 700, color: '#10b981' }}>
+          <span style={{ fontWeight: 700, color: COLORS.success }}>
             Total: {formatGs(reserva.total_estimado || 0)}
           </span>
         </div>
@@ -1077,7 +1078,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
                     onBlur={e => checkRequired('fk_tarifa', e.target.value)}
                   >
                     <option value="">Seleccionar...</option>
-                    {tarifas.map(t => <option key={t.id} value={t.id} style={{ color: '#000' }}>{t.nombre} - ${t.precio_base}</option>)}
+                    {tarifas.map(t => <option key={t.id} value={t.id} style={{ color: COLORS.black }}>{t.nombre} - ${t.precio_base}</option>)}
                   </select>
                   {formErrors.fk_tarifa && <span className="field-error">{formErrors.fk_tarifa}</span>}
                 </div>
@@ -1173,11 +1174,11 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
               <div key={det.id_detalle} className="huesped-card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                   <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <BedDouble size={16} color="#60a5fa" />
+                    <BedDouble size={16} color={COLORS.primaryLight} />
                     Hab. #{det.habitaciones?.numero_habitacion || det.fk_habitacion}
                     <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 400 }}>({det.habitaciones?.tipo_habitacion?.nombre || 'N/A'})</span>
                     {cupo > 0 && (
-                      <span style={{ fontSize: '12px', color: lleno ? '#f59e0b' : 'var(--text-secondary)', fontWeight: 400 }}>
+                      <span style={{ fontSize: '12px', color: lleno ? COLORS.warning : 'var(--text-secondary)', fontWeight: 400 }}>
                         · {cargados}/{cupo} huésped{cupo > 1 ? 'es' : ''}
                       </span>
                     )}
@@ -1201,7 +1202,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
                     {(huespedesMap[det.id_detalle] || []).map(h => (
                       <div key={h.id_huesped} className="huesped-item">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
-                          <UserCheck size={16} color={h.es_titular ? '#10b981' : '#64748b'} />
+                          <UserCheck size={16} color={h.es_titular ? COLORS.success : COLORS.textMuted} />
                           <div>
                             <span style={{ fontWeight: 600 }}>{h.nombre_completo}</span>
                             {h.es_titular && <span className="badge-titular">Titular</span>}
@@ -1248,7 +1249,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
                   onBlur={e => checkRequired('fk_tipo_documento', e.target.value)}
                 >
                   <option value="" disabled hidden>Seleccionar...</option>
-                  {tiposDocumentoHuesped.map(td => <option key={td.cod_tipodoc} value={td.cod_tipodoc} style={{ color: '#000' }}>{td.descripcion_tipodoc}</option>)}
+                  {tiposDocumentoHuesped.map(td => <option key={td.cod_tipodoc} value={td.cod_tipodoc} style={{ color: COLORS.black }}>{td.descripcion_tipodoc}</option>)}
                 </select>
                 {formErrors.fk_tipo_documento && <span className="field-error">{formErrors.fk_tipo_documento}</span>}
               </div>
@@ -1306,7 +1307,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
                 <label>Tipo de Movimiento</label>
                 <select className="input-field" value={historialForm.tipo_movimiento} onChange={e => setHistorialForm(p => ({ ...p, tipo_movimiento: e.target.value }))}>
                   {['NOTA', 'MODIFICACION', 'CAMBIO_ESTADO', 'CHECK_IN', 'CHECK_OUT', 'CANCELACION'].map(t => (
-                    <option key={t} value={t} style={{ color: '#000' }}>{t.replace(/_/g, ' ')}</option>
+                    <option key={t} value={t} style={{ color: COLORS.black }}>{t.replace(/_/g, ' ')}</option>
                   ))}
                 </select>
               </div>
@@ -1377,11 +1378,11 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                <FileText size={22} color="#34d399" />
+                <FileText size={22} color={COLORS.successLight} />
                 <span style={{ fontSize: 18, fontWeight: 600 }}>Folio #{folioResumen.id_folio}</span>
                 <span
                   className="status-badge"
-                  style={{ '--badge-color': folioResumen.estado === 'abierto' ? '#10b981' : '#94a3b8' } as React.CSSProperties}
+                  style={{ '--badge-color': folioResumen.estado === 'abierto' ? COLORS.success : COLORS.textSecondary } as React.CSSProperties}
                 >
                   {folioResumen.estado?.toUpperCase()}
                 </span>

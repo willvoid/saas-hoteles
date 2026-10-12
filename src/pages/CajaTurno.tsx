@@ -7,6 +7,7 @@ import { formatGs } from '../utils/currency';
 import { validarMontoTurno, validarTipeoMontoTurno } from '../utils/montoTurno';
 import type { Role } from '../utils/permissions';
 import '../index.css';
+import { COLORS } from '../constants/colors';
 
 interface CajaTurnoProps {
   currentUser: { id?: number; id_usuario?: number };
@@ -198,9 +199,9 @@ export default function CajaTurno({ currentUser, role, onTurnoAbierto }: CajaTur
       ) : turno ? (
         <form style={panelStyle} onSubmit={handleCerrar}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <Wallet size={22} color="#34d399" />
+            <Wallet size={22} color={COLORS.successLight} />
             <span style={{ fontSize: 18, fontWeight: 600 }}>Turno abierto</span>
-            <span className="status-badge" style={{ '--badge-color': '#10b981' } as React.CSSProperties}>ACTIVO</span>
+            <span className="status-badge" style={{ '--badge-color': COLORS.success } as React.CSSProperties}>ACTIVO</span>
           </div>
           <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px', margin: 0 }}>
             <dt style={{ color: 'var(--text-secondary)' }}>Caja</dt>
@@ -238,7 +239,7 @@ export default function CajaTurno({ currentUser, role, onTurnoAbierto }: CajaTur
       ) : (
         <form style={panelStyle} onSubmit={handleAbrir}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <Wallet size={22} color="#94a3b8" />
+            <Wallet size={22} color={COLORS.textSecondary} />
             <span style={{ fontSize: 18, fontWeight: 600 }}>No tenés un turno abierto</span>
           </div>
 
@@ -292,7 +293,7 @@ export default function CajaTurno({ currentUser, role, onTurnoAbierto }: CajaTur
       {!loading && puedeCerrarAjenos(role) && turnosAbiertos.length > 0 && (
         <div style={{ ...panelStyle, maxWidth: 720, marginTop: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <ShieldAlert size={20} color="#f59e0b" />
+            <ShieldAlert size={20} color={COLORS.warning} />
             <span style={{ fontSize: 16, fontWeight: 600 }}>Turnos abiertos de otros usuarios</span>
           </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: -8, marginBottom: 16 }}>

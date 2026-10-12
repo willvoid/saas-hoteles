@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Upload, X, Image as ImageIcon } from 'lucide-react';
 import { IMAGEN_ACCEPT } from '../utils/imagenes';
+import { COLORS, tint } from '../constants/colors';
 
 export interface ImagenItem {
   // Un id numérico corresponde a una imagen ya persistida; uno de texto, a una pendiente de subir.
@@ -73,19 +74,19 @@ export function ImageManager({
             position: 'relative',
             borderRadius: '8px',
             overflow: 'hidden',
-            border: img.es_principal ? '2px solid #3b82f6' : '1px solid var(--glass-border)',
+            border: img.es_principal ? `2px solid ${COLORS.primary}` : '1px solid var(--glass-border)',
             aspectRatio: '1'
           }}>
             <img src={img.ruta_storage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
 
-            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '8px', background: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%)', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '8px', background: `linear-gradient(to bottom, ${tint('black', 0.7)} 0%, transparent 100%)`, display: 'flex', justifyContent: 'space-between' }}>
               {img.es_principal ? (
-                <span style={{ color: '#fff', fontSize: '12px', fontWeight: 'bold', background: '#3b82f6', padding: '2px 6px', borderRadius: '4px' }}>Principal</span>
+                <span style={{ color: COLORS.white, fontSize: '12px', fontWeight: 'bold', background: COLORS.primary, padding: '2px 6px', borderRadius: '4px' }}>Principal</span>
               ) : (
                 <button
                   type="button"
                   onClick={() => onSetPrincipal(img.id)}
-                  style={{ background: 'rgba(0,0,0,0.5)', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', cursor: 'pointer' }}
+                  style={{ background: tint('black', 0.5), color: COLORS.white, border: 'none', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', cursor: 'pointer' }}
                 >
                   Hacer Ppal.
                 </button>
@@ -93,7 +94,7 @@ export function ImageManager({
               <button
                 type="button"
                 onClick={() => onDelete(img)}
-                style={{ background: 'rgba(239, 68, 68, 0.8)', color: '#fff', border: 'none', borderRadius: '4px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                style={{ background: tint('error', 0.8), color: COLORS.white, border: 'none', borderRadius: '4px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
               >
                 <X size={14} />
               </button>

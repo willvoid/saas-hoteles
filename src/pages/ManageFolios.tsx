@@ -5,6 +5,7 @@ import { ModuleLayout } from '../components/ModuleLayout';
 import { formatGs } from '../utils/currency';
 import { Search, ExternalLink, Filter } from 'lucide-react';
 import '../index.css';
+import { COLORS } from '../constants/colors';
 
 interface ManageFoliosProps {
   onViewFolio: (id: number) => void;
@@ -52,11 +53,11 @@ export default function ManageFolios({ onViewFolio }: ManageFoliosProps) {
     { header: 'Reserva', render: (f) => `Res. #${f.fk_reserva}` },
     { header: 'Cliente', render: (f) => f.reserva?.clientes?.razon_social || f.reserva?.cliente?.razon_social || 'Cliente Desconocido' },
     { header: 'Estado', render: (f) => (
-      <span className="status-badge" style={{ '--badge-color': f.estado === 'abierto' ? '#10b981' : '#94a3b8' } as React.CSSProperties}>
+      <span className="status-badge" style={{ '--badge-color': f.estado === 'abierto' ? COLORS.success : COLORS.textSecondary } as React.CSSProperties}>
         {f.estado.toUpperCase()}
       </span>
     )},
-    { header: 'Total Acumulado', render: (f) => <span style={{ fontWeight: 600, color: '#f59e0b' }}>{formatGs(f.total_acumulado || 0)}</span> },
+    { header: 'Total Acumulado', render: (f) => <span style={{ fontWeight: 600, color: COLORS.warning }}>{formatGs(f.total_acumulado || 0)}</span> },
     { header: 'Apertura', render: (f) => <span style={{ color: 'var(--text-secondary)' }}>{new Date(f.created_at).toLocaleString()}</span> },
     { header: 'Acciones', align: 'center', render: (f) => (
       <button onClick={() => onViewFolio(f.id_folio)} className="btn-action blue with-label" title="Abrir Folio">
@@ -72,7 +73,7 @@ export default function ManageFolios({ onViewFolio }: ManageFoliosProps) {
     >
       <div className="filters-bar">
         <div className="search-box">
-          <Search size={16} color="#94a3b8" />
+          <Search size={16} color={COLORS.textSecondary} />
           <input 
             type="text" 
             placeholder="Buscar por ID de folio, reserva o cliente..." 
@@ -82,21 +83,21 @@ export default function ManageFolios({ onViewFolio }: ManageFoliosProps) {
           />
         </div>
         <div className="filter-chips">
-          <Filter size={16} color="#94a3b8" />
+          <Filter size={16} color={COLORS.textSecondary} />
           <button className={`chip ${!filterEstado ? 'active' : ''}`} onClick={() => setFilterEstado('')}>
             Todos
           </button>
           <button 
             className={`chip ${filterEstado === 'abierto' ? 'active' : ''}`} 
             onClick={() => setFilterEstado('abierto')}
-            style={filterEstado === 'abierto' ? { '--chip-color': '#10b981' } as React.CSSProperties : {}}
+            style={filterEstado === 'abierto' ? { '--chip-color': COLORS.success } as React.CSSProperties : {}}
           >
             Abiertos
           </button>
           <button 
             className={`chip ${filterEstado === 'cerrado' ? 'active' : ''}`} 
             onClick={() => setFilterEstado('cerrado')}
-            style={filterEstado === 'cerrado' ? { '--chip-color': '#94a3b8' } as React.CSSProperties : {}}
+            style={filterEstado === 'cerrado' ? { '--chip-color': COLORS.textSecondary } as React.CSSProperties : {}}
           >
             Cerrados
           </button>

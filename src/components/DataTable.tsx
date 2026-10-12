@@ -1,5 +1,6 @@
 import React, { ReactNode, useState, useEffect } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import { COLORS, tint } from '../constants/colors';
 
 export interface Column<T = any> {
   header: string;
@@ -39,7 +40,7 @@ export function DataTable<T>({
       <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
         {data.length === 0 ? (
           <div style={{ 
-            background: 'rgba(0, 0, 0, 0.2)', 
+            background: tint('black', 0.2), 
             borderRadius: '16px', 
             border: '1px solid var(--glass-border)',
             padding: '40px', 
@@ -57,7 +58,7 @@ export function DataTable<T>({
             
             return (
               <div key={key} style={{ 
-                background: 'rgba(0, 0, 0, 0.2)', 
+                background: tint('black', 0.2), 
                 borderRadius: '12px', 
                 border: '1px solid var(--glass-border)',
                 overflow: 'hidden'
@@ -70,7 +71,7 @@ export function DataTable<T>({
                     justifyContent: 'space-between', 
                     alignItems: 'center',
                     cursor: 'pointer',
-                    background: isExpanded ? 'rgba(255,255,255,0.05)' : 'transparent',
+                    background: isExpanded ? COLORS.glassBg : 'transparent',
                     transition: 'background 0.2s'
                   }}
                 >
@@ -81,14 +82,14 @@ export function DataTable<T>({
                 </div>
                 
                 {isExpanded && (
-                  <div style={{ padding: '0 16px 16px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div style={{ padding: '0 16px 16px', borderTop: `1px solid ${COLORS.glassBg}` }}>
                     {columns.slice(1).map((col, index) => (
                       <div key={index} style={{ 
                         display: 'flex', 
                         flexDirection: 'column',
                         paddingTop: '12px',
                         marginTop: index > 0 ? '12px' : '0',
-                        borderTop: index > 0 ? '1px solid rgba(255,255,255,0.05)' : 'none'
+                        borderTop: index > 0 ? `1px solid ${COLORS.glassBg}` : 'none'
                       }}>
                         <span style={{ 
                           fontSize: '12px', 
@@ -116,7 +117,7 @@ export function DataTable<T>({
 
   return (
     <div style={{
-      background: 'rgba(0, 0, 0, 0.2)',
+      background: tint('black', 0.2),
       borderRadius: '16px',
       border: '1px solid var(--glass-border)',
       overflow: 'hidden',
@@ -125,7 +126,7 @@ export function DataTable<T>({
       <div style={{ overflowX: 'auto', width: '100%' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '700px' }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid var(--glass-border)', background: 'rgba(255,255,255,0.05)' }}>
+            <tr style={{ borderBottom: '1px solid var(--glass-border)', background: COLORS.glassBg }}>
               {columns.map((col, index) => (
                 <th key={index} style={{
                   padding: '16px',
@@ -150,7 +151,7 @@ export function DataTable<T>({
               </tr>
             ) : (
               data.map((item) => (
-                <tr key={keyExtractor(item)} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', transition: 'background 0.2s' }}>
+                <tr key={keyExtractor(item)} style={{ borderBottom: `1px solid ${COLORS.glassBg}`, transition: 'background 0.2s' }}>
                   {columns.map((col, index) => (
                     <td key={index} style={{ padding: '16px', textAlign: col.align || 'left' }}>
                       {col.render ? col.render(item) : (col.accessor ? (item as any)[col.accessor] || '-' : '-')}

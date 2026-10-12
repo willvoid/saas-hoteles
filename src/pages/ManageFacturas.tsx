@@ -7,6 +7,7 @@ import { FilterChips, ChipOption } from '../components/FilterChips';
 import { formatGs } from '../utils/currency';
 import type { FacturaListItem } from '../types/factura';
 import '../index.css';
+import { COLORS } from '../constants/colors';
 
 interface ManageFacturasProps {
   onNewFactura: () => void;
@@ -14,8 +15,8 @@ interface ManageFacturasProps {
 }
 
 const ESTADO_COLOR: Record<string, string> = {
-  EMITIDA: '#10b981',
-  ANULADA: '#ef4444',
+  EMITIDA: COLORS.success,
+  ANULADA: COLORS.error,
 };
 
 const chips: ChipOption<string>[] = [
@@ -61,11 +62,11 @@ export default function ManageFacturas({ onNewFactura, onViewFactura }: ManageFa
     { header: 'Nº', render: (f) => <span style={{ fontWeight: 600 }}>#{f.nro_secuencial}</span> },
     { header: 'Cliente', render: (f) => f.cliente?.razon_social || 'Consumidor final' },
     { header: 'Fecha', render: (f) => <span style={{ color: 'var(--text-secondary)' }}>{new Date(f.fecha_emision).toLocaleString()}</span> },
-    { header: 'Total', align: 'right', render: (f) => <span style={{ fontWeight: 600, color: '#34d399' }}>{formatGs(f.total_general)}</span> },
+    { header: 'Total', align: 'right', render: (f) => <span style={{ fontWeight: 600, color: COLORS.successLight }}>{formatGs(f.total_general)}</span> },
     {
       header: 'Estado',
       render: (f) => (
-        <span className="status-badge" style={{ '--badge-color': ESTADO_COLOR[f.estado] || '#94a3b8' } as React.CSSProperties}>
+        <span className="status-badge" style={{ '--badge-color': ESTADO_COLOR[f.estado] || COLORS.textSecondary } as React.CSSProperties}>
           {f.estado}
         </span>
       ),
@@ -93,7 +94,7 @@ export default function ManageFacturas({ onNewFactura, onViewFactura }: ManageFa
     >
       <div className="filters-bar" style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 }}>
         <div className="search-box">
-          <Search size={16} color="#94a3b8" />
+          <Search size={16} color={COLORS.textSecondary} />
           <input
             type="text"
             placeholder="Buscar por Nº o cliente…"

@@ -8,6 +8,7 @@ import { ModuleLayout } from '../components/ModuleLayout';
 import { ClienteRecurrenteBadge } from '../components/ClienteRecurrenteBadge';
 import { isClienteRecurrente, getReservationCount } from '../utils/clienteRecurrencia';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 interface CreateClientProps {
   onCancel: () => void;
@@ -467,7 +468,7 @@ export default function CreateClient({ onCancel, onCreated, clientToEdit }: Crea
           marginBottom: '20px', 
           padding: '12px 16px', 
           borderRadius: '12px', 
-          background: 'rgba(255, 255, 255, 0.03)', 
+          background: tint('white', 0.03), 
           border: '1px solid var(--glass-border)' 
         }}>
           <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Historial del cliente:</span>
@@ -598,7 +599,7 @@ export default function CreateClient({ onCancel, onCreated, clientToEdit }: Crea
           />
         </div>
 
-        <div className="divider" style={{height:'1px', background: 'rgba(255,255,255,0.1)', margin: '20px 0'}}></div>
+        <div className="divider" style={{height:'1px', background: COLORS.glassBorder, margin: '20px 0'}}></div>
 
         {/* Sección: Ubicación (Cascada) */}
         <h3 className="section-title">Ubicación Geo-espacial</h3>

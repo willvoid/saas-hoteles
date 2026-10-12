@@ -1,5 +1,6 @@
 import { formatGs } from '../utils/currency';
 import type { TicketData } from '../types/factura';
+import { COLORS } from '../constants/colors';
 
 interface TicketImprimibleProps {
   data: TicketData;
@@ -22,8 +23,8 @@ export default function TicketImprimible({ data }: TicketImprimibleProps) {
     <div
       id="ticket-imprimible"
       style={{
-        background: '#fff',
-        color: '#000',
+        background: COLORS.white,
+        color: COLORS.black,
         width: '100%',
         maxWidth: 340,
         margin: '0 auto',
@@ -41,7 +42,7 @@ export default function TicketImprimible({ data }: TicketImprimibleProps) {
         {estab?.email && <div>{estab.email}</div>}
       </div>
 
-      <div style={{ border: '1px solid #000', padding: 6, marginBottom: 10, textAlign: 'center' }}>
+      <div style={{ border: `1px solid ${COLORS.black}`, padding: 6, marginBottom: 10, textAlign: 'center' }}>
         <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>
           Documento de uso interno
         </div>
@@ -58,7 +59,7 @@ export default function TicketImprimible({ data }: TicketImprimibleProps) {
         )}
       </div>
 
-      <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+      <div style={{ borderTop: `1px dashed ${COLORS.black}`, margin: '8px 0' }} />
 
       {data.lineas.map((l) => (
         <div key={l.id_detalle} style={{ marginBottom: 6 }}>
@@ -70,7 +71,7 @@ export default function TicketImprimible({ data }: TicketImprimibleProps) {
         </div>
       ))}
 
-      <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+      <div style={{ borderTop: `1px dashed ${COLORS.black}`, margin: '8px 0' }} />
 
       <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}>
         <span>TOTAL</span>

@@ -23,6 +23,7 @@ import {
   DESOCUPADO_STYLE
 } from '../components/roomStatus';
 import '../index.css';
+import { tint } from '../constants/colors';
 
 interface HabitacionRow {
   id: number;
@@ -251,7 +252,7 @@ export default function ManageHabitaciones({
         </div>
       ) : filteredRooms.length === 0 ? (
         <div style={{
-          background: 'rgba(0, 0, 0, 0.15)',
+          background: tint('black', 0.15),
           border: '1px dashed var(--glass-border)',
           borderRadius: '20px',
           padding: '80px 20px',

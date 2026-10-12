@@ -5,6 +5,7 @@ import { DataTable, Column } from '../components/DataTable';
 import { ModuleLayout } from '../components/ModuleLayout';
 import { Modal } from '../components/Modal';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 interface ManagePisosProps {
   onBack: () => void;
@@ -106,8 +107,8 @@ export default function ManagePisos({ onBack }: ManagePisosProps) {
       header: 'Edificio',
       render: (p: any) => (
         <span style={{
-          color: '#a78bfa',
-          backgroundColor: 'rgba(139, 92, 246, 0.1)',
+          color: COLORS.purpleLight,
+          backgroundColor: tint('purple', 0.1),
           padding: '4px 8px',
           borderRadius: '12px',
           fontSize: '12px',
@@ -123,8 +124,8 @@ export default function ManagePisos({ onBack }: ManagePisosProps) {
         const inactivo = isInactivo(p);
         return (
           <span style={{
-            color: inactivo ? '#ef4444' : '#10b981',
-            backgroundColor: inactivo ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+            color: inactivo ? COLORS.error : COLORS.success,
+            backgroundColor: inactivo ? tint('error', 0.1) : tint('success', 0.1),
             padding: '4px 8px',
             borderRadius: '12px',
             fontSize: '12px',
@@ -155,9 +156,9 @@ export default function ManagePisos({ onBack }: ManagePisosProps) {
                 width: 'auto',
                 padding: '6px 12px',
                 fontSize: '13px',
-                background: 'rgba(59, 130, 246, 0.2)',
-                color: '#60a5fa',
-                border: '1px solid rgba(59, 130, 246, 0.4)'
+                background: tint('primary', 0.2),
+                color: COLORS.primaryLight,
+                border: `1px solid ${tint('primary', 0.4)}`
               }}
             >
               Editar
@@ -169,9 +170,9 @@ export default function ManagePisos({ onBack }: ManagePisosProps) {
                 width: 'auto',
                 padding: '6px 12px',
                 fontSize: '13px',
-                background: inactivo ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-                color: inactivo ? '#34d399' : '#f87171',
-                border: inactivo ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(239, 68, 68, 0.4)'
+                background: inactivo ? tint('success', 0.2) : tint('error', 0.2),
+                color: inactivo ? COLORS.successLight : COLORS.errorLight,
+                border: inactivo ? `1px solid ${tint('success', 0.4)}` : `1px solid ${tint('error', 0.4)}`
               }}
             >
               {inactivo ? 'Reactivar' : 'Desactivar'}
@@ -233,7 +234,7 @@ export default function ManagePisos({ onBack }: ManagePisosProps) {
             type="checkbox"
             checked={showInactivos}
             onChange={(e) => setShowInactivos(e.target.checked)}
-            style={{ width: '16px', height: '16px', accentColor: '#8b5cf6', cursor: 'pointer' }}
+            style={{ width: '16px', height: '16px', accentColor: COLORS.purple, cursor: 'pointer' }}
           />
           Mostrar inactivos
         </label>
@@ -265,10 +266,10 @@ export default function ManagePisos({ onBack }: ManagePisosProps) {
                 : <>¿Deseas desactivar el piso <strong>#{confirmTarget.numero}</strong>?</>}
             </p>
             <p style={{
-              color: confirmInactivo ? '#34d399' : '#fca5a5',
+              color: confirmInactivo ? COLORS.successLight : COLORS.errorLighter,
               fontSize: '13px',
-              background: confirmInactivo ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
-              border: confirmInactivo ? '1px solid rgba(16,185,129,0.2)' : '1px solid rgba(239,68,68,0.2)',
+              background: confirmInactivo ? tint('success', 0.08) : tint('error', 0.08),
+              border: confirmInactivo ? `1px solid ${tint('success', 0.2)}` : `1px solid ${tint('error', 0.2)}`,
               borderRadius: '10px',
               padding: '10px 14px'
             }}>
@@ -291,9 +292,9 @@ export default function ManagePisos({ onBack }: ManagePisosProps) {
                 style={{
                   width: 'auto',
                   padding: '10px 20px',
-                  background: confirmInactivo ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)',
-                  color: confirmInactivo ? '#34d399' : '#f87171',
-                  border: confirmInactivo ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(239, 68, 68, 0.4)'
+                  background: confirmInactivo ? tint('success', 0.25) : tint('error', 0.25),
+                  color: confirmInactivo ? COLORS.successLight : COLORS.errorLight,
+                  border: confirmInactivo ? `1px solid ${tint('success', 0.4)}` : `1px solid ${tint('error', 0.4)}`
                 }}
                 disabled={saving}
               >

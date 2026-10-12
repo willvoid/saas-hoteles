@@ -58,6 +58,7 @@ import { validarMontoTurno, validarTipeoMontoTurno } from '../utils/montoTurno';
 import type { Turno } from '../types/factura';
 import { TabId, normalizeRole, canAccessTab, canAssignCleaner, canBlockRooms, defaultTab } from '../utils/permissions';
 import type { User } from '../types/user';
+import { COLORS, tint } from '../constants/colors';
 
 interface DashboardProps {
   user: User;
@@ -560,7 +561,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
       {isMobileMenuOpen && (
         <div
           style={{
-            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 15
+            position: 'fixed', inset: 0, backgroundColor: tint('black', 0.5), zIndex: 15
           }}
           onClick={() => setIsMobileMenuOpen(false)}
         />
@@ -600,7 +601,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
 
               <div className="stat-card">
                 <div className="stat-card-glow"></div>
-                <div className="stat-icon" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+                <div className="stat-icon" style={{ background: tint('success', 0.15), color: COLORS.successLight }}>
                   <TrendingUp size={24} />
                 </div>
                 <div className="stat-info">

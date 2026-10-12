@@ -10,6 +10,7 @@ import { buildReporteIngresosPdf, reporteIngresosPdfFilename } from '../utils/re
 import { buildReporteTurnosPdf, reporteTurnosPdfFilename } from '../utils/reporteTurnosPdf';
 import { ModuleLayout } from '../components/ModuleLayout';
 import '../index.css';
+import { COLORS } from '../constants/colors';
 
 const panelStyle: CSSProperties = {
   background: 'var(--glass-bg)',
@@ -204,7 +205,7 @@ export default function ManageReportes() {
                         {t.cierre ? (
                           new Date(t.cierre).toLocaleString()
                         ) : (
-                          <span className="status-badge" style={{ '--badge-color': '#10b981' } as CSSProperties}>
+                          <span className="status-badge" style={{ '--badge-color': COLORS.success } as CSSProperties}>
                             ABIERTO
                           </span>
                         )}
@@ -237,7 +238,7 @@ export default function ManageReportes() {
         <>
           <div style={{ ...panelStyle, marginBottom: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <Wallet size={22} color="#34d399" />
+              <Wallet size={22} color={COLORS.successLight} />
               <span style={{ fontSize: 18, fontWeight: 600 }}>Total ingresado</span>
             </div>
             <div style={{ fontSize: 32, fontWeight: 700 }}>{formatGs(data.total)}</div>

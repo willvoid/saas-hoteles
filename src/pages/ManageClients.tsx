@@ -6,6 +6,7 @@ import { ModuleLayout } from '../components/ModuleLayout';
 import { ClienteRecurrenteBadge } from '../components/ClienteRecurrenteBadge';
 import { isClienteRecurrente, getReservationCount } from '../utils/clienteRecurrencia';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 interface ManageClientsProps {
   onBack: () => void;
@@ -153,9 +154,9 @@ export default function ManageClients({
           borderRadius: '20px', 
           fontSize: '12px', 
           fontWeight: '600',
-          backgroundColor: client.estado_cliente === 'Activo' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-          color: client.estado_cliente === 'Activo' ? '#10b981' : '#ef4444',
-          border: `1px solid ${client.estado_cliente === 'Activo' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`
+          backgroundColor: client.estado_cliente === 'Activo' ? tint('success', 0.2) : tint('error', 0.2),
+          color: client.estado_cliente === 'Activo' ? COLORS.success : COLORS.error,
+          border: `1px solid ${client.estado_cliente === 'Activo' ? tint('success', 0.4) : tint('error', 0.4)}`
         }}>
           {client.estado_cliente || 'Desconocido'}
         </span>
@@ -172,9 +173,9 @@ export default function ManageClients({
             width: 'auto', 
             padding: '6px 16px', 
             fontSize: '13px', 
-            background: 'rgba(59, 130, 246, 0.2)', 
-            color: '#60a5fa',
-            border: '1px solid rgba(59, 130, 246, 0.4)'
+            background: tint('primary', 0.2), 
+            color: COLORS.primaryLight,
+            border: `1px solid ${tint('primary', 0.4)}`
           }}
         >
           Editar

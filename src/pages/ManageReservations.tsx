@@ -10,6 +10,7 @@ import { RESERVA_ESTADOS } from '../types/reservation';
 import { esReservaCerrada } from '../utils/reservaEstado';
 import { formatGs } from '../utils/currency';
 import '../index.css';
+import { COLORS } from '../constants/colors';
 
 interface ManageReservationsProps {
   onBack: () => void;
@@ -45,11 +46,11 @@ export default function ManageReservations({ onBack, onNewReservation, onViewDet
 
   const getStatusColor = (estado: string) => {
     switch (estado?.toLowerCase()) {
-      case 'confirmada': case 'check-in': return '#10b981';
-      case 'pendiente': return '#f59e0b';
-      case 'cancelada': return '#ef4444';
-      case 'check-out': return '#6366f1';
-      default: return '#94a3b8';
+      case 'confirmada': case 'check-in': return COLORS.success;
+      case 'pendiente': return COLORS.warning;
+      case 'cancelada': return COLORS.error;
+      case 'check-out': return COLORS.indigo;
+      default: return COLORS.textSecondary;
     }
   };
 
@@ -133,11 +134,11 @@ export default function ManageReservations({ onBack, onNewReservation, onViewDet
       {/* Filters */}
       <div className="filters-bar">
         <div className="search-box">
-          <Search size={16} color="#94a3b8" />
+          <Search size={16} color={COLORS.textSecondary} />
           <input type="text" placeholder="Buscar por código, cliente..." value={searchText} onChange={e => setSearchText(e.target.value)} className="search-input" />
         </div>
         <div className="filter-chips">
-          <Filter size={16} color="#94a3b8" />
+          <Filter size={16} color={COLORS.textSecondary} />
           <button className={`chip ${!filterEstado ? 'active' : ''}`} onClick={() => setFilterEstado('')}>Todos</button>
           {estados.map(e => (
             <button key={e} className={`chip ${filterEstado === e ? 'active' : ''}`} onClick={() => setFilterEstado(filterEstado === e ? '' : e)}

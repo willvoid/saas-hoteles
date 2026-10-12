@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { formatGs } from '../utils/currency';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 interface Concepto {
   id_concepto: number;
@@ -134,14 +135,14 @@ export default function AutocompleteConceptos({ conceptos, value, onChange, lock
           top: '100%',
           left: 0,
           right: 0,
-          backgroundColor: 'rgb(30, 41, 59)', /* slate-800 from index.css colors */
-          border: '1px solid rgba(255,255,255,0.1)',
+          backgroundColor: COLORS.bgEnd,
+          border: `1px solid ${COLORS.glassBorder}`,
           borderRadius: '8px',
           marginTop: '4px',
           maxHeight: '200px',
           overflowY: 'auto',
           zIndex: 50,
-          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
+          boxShadow: `0 10px 15px -3px ${tint('black', 0.5)}`
         }}>
           {filteredConceptos.length > 0 ? (
             filteredConceptos.map(concepto => (
@@ -151,17 +152,17 @@ export default function AutocompleteConceptos({ conceptos, value, onChange, lock
                 style={{
                   padding: '10px 16px',
                   cursor: 'pointer',
-                  borderBottom: '1px solid rgba(255,255,255,0.05)',
-                  color: '#f8fafc'
+                  borderBottom: `1px solid ${COLORS.glassBg}`,
+                  color: COLORS.textPrimary
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.15)')}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = tint('primary', 0.15))}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
-                {concepto.nombre} <span style={{ color: '#94a3b8', fontSize: '0.9em' }}>({formatGs(concepto.arancel || 0)})</span>
+                {concepto.nombre} <span style={{ color: COLORS.textSecondary, fontSize: '0.9em' }}>({formatGs(concepto.arancel || 0)})</span>
               </div>
             ))
           ) : (
-            <div style={{ padding: '10px 16px', color: '#94a3b8', fontStyle: 'italic' }}>
+            <div style={{ padding: '10px 16px', color: COLORS.textSecondary, fontStyle: 'italic' }}>
               No se encontraron conceptos...
             </div>
           )}

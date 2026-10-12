@@ -1,4 +1,5 @@
 import React, { ReactNode } from 'react';
+import { COLORS } from '../constants/colors';
 
 export interface QuickAction {
   label: string;
@@ -35,7 +36,7 @@ const QuickActions: React.FC<QuickActionsProps> = ({
                 gap: '8px',
                 ...(isPrimary 
                   ? {} 
-                  : { background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)' }
+                  : { background: COLORS.glassBorder, border: '1px solid var(--glass-border)' }
                 )
               }}
               onClick={action.onClick}

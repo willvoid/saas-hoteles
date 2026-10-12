@@ -6,6 +6,7 @@ import { PhoneField } from '../PhoneField';
 import { separarTelefono, validarCodigoPais, validarNumero } from '../../utils/telefono';
 import { validarDocumentoPorTipo, validarEmail, RUC_TIPO_DOC_VALUE } from '../../utils/diccionarioValidaciones';
 import { Loader2, CheckCircle } from 'lucide-react';
+import { COLORS, tint } from '../../constants/colors';
 
 export default function Step4Client() {
   const { slug, catalogo, currentStep, setCurrentStep, bookingData, setClientData, setObservaciones, calculateTotal } = useBooking();
@@ -253,7 +254,7 @@ export default function Step4Client() {
           value={obs}
           onChange={(e) => setObs(e.target.value)}
           placeholder="Ej. Pasajeros solicitan cama matrimonial, check-in tardío, etc."
-          style={{ width: '100%', padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.1)' }}
+          style={{ width: '100%', padding: '12px', borderRadius: '8px', background: tint('black', 0.2), color: 'white', border: `1px solid ${COLORS.glassBorder}` }}
         />
       </div>
 

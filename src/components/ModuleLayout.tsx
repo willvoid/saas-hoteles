@@ -1,4 +1,5 @@
 import React, { ReactNode } from 'react';
+import { COLORS } from '../constants/colors';
 
 interface ModuleLayoutProps {
   title: string;
@@ -24,7 +25,7 @@ export function ModuleLayout({ title, description, actions, children }: ModuleLa
             fontSize: '28px', 
             textAlign: 'left', 
             wordBreak: 'break-word',
-            background: 'linear-gradient(135deg, #fff, #94a3b8)',
+            background: `linear-gradient(135deg, ${COLORS.white}, ${COLORS.textSecondary})`,
             WebkitBackgroundClip: 'text',
             backgroundClip: 'text',
             WebkitTextFillColor: 'transparent'

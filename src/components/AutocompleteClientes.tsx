@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { ClienteRecurrenteBadge } from './ClienteRecurrenteBadge';
 import { isClienteRecurrente, getReservationCount, ClienteConReservas } from '../utils/clienteRecurrencia';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 interface Client extends ClienteConReservas {
   id_cliente: number;
@@ -157,14 +158,14 @@ export default function AutocompleteClientes({ clients, value, onChange, lockOnS
           top: '100%',
           left: 0,
           right: 0,
-          backgroundColor: 'rgb(30, 41, 59)', /* slate-800 from index.css colors */
-          border: '1px solid rgba(255,255,255,0.1)',
+          backgroundColor: COLORS.bgEnd,
+          border: `1px solid ${COLORS.glassBorder}`,
           borderRadius: '8px',
           marginTop: '4px',
           maxHeight: '220px',
           overflowY: 'auto',
           zIndex: 50,
-          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
+          boxShadow: `0 10px 15px -3px ${tint('black', 0.5)}`
         }}>
           {filteredClients.length > 0 ? (
             filteredClients.map(client => (
@@ -174,14 +175,14 @@ export default function AutocompleteClientes({ clients, value, onChange, lockOnS
                 style={{
                   padding: '10px 16px',
                   cursor: 'pointer',
-                  borderBottom: '1px solid rgba(255,255,255,0.05)',
-                  color: '#f8fafc',
+                  borderBottom: `1px solid ${COLORS.glassBg}`,
+                  color: COLORS.textPrimary,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: '12px'
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.15)')}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = tint('primary', 0.15))}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', minWidth: 0 }}>
@@ -193,14 +194,14 @@ export default function AutocompleteClientes({ clients, value, onChange, lockOnS
                   />
                 </div>
                 {client.documento && (
-                  <span style={{ color: '#94a3b8', fontSize: '0.85em', flexShrink: 0 }}>
+                  <span style={{ color: COLORS.textSecondary, fontSize: '0.85em', flexShrink: 0 }}>
                     ({client.documento})
                   </span>
                 )}
               </div>
             ))
           ) : (
-            <div style={{ padding: '10px 16px', color: '#94a3b8', fontStyle: 'italic' }}>
+            <div style={{ padding: '10px 16px', color: COLORS.textSecondary, fontStyle: 'italic' }}>
               No se encontraron clientes...
             </div>
           )}

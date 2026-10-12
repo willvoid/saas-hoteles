@@ -8,6 +8,7 @@ import { getTransitionCopy, canTransition } from '../utils/facturaEstado';
 import { formatGs } from '../utils/currency';
 import type { MotivoItem, TicketData } from '../types/factura';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 interface FacturaDetailProps {
   facturaId: number;
@@ -22,8 +23,8 @@ const panelStyle: React.CSSProperties = {
 };
 
 const ESTADO_COLOR: Record<string, string> = {
-  EMITIDA: '#10b981',
-  ANULADA: '#ef4444',
+  EMITIDA: COLORS.success,
+  ANULADA: COLORS.error,
 };
 
 export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps) {
@@ -135,7 +136,7 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
       {puedeAnular && (
         <button
           className="btn-ghost"
-          style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)', display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          style={{ color: COLORS.error, borderColor: tint('error', 0.4), display: 'inline-flex', alignItems: 'center', gap: 8 }}
           onClick={() => setAnularOpen(true)}
         >
           <Ban size={16} /> Anular
@@ -158,7 +159,7 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
             <span style={{ fontSize: 16, fontWeight: 600 }}>
               {factura.cliente?.razon_social || 'Consumidor final'}
             </span>
-            <span className="status-badge" style={{ '--badge-color': ESTADO_COLOR[factura.estado] || '#94a3b8' } as React.CSSProperties}>
+            <span className="status-badge" style={{ '--badge-color': ESTADO_COLOR[factura.estado] || COLORS.textSecondary } as React.CSSProperties}>
               {factura.estado}
             </span>
           </div>
@@ -229,7 +230,7 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
               </>
             )}
             <dt style={{ fontWeight: 700, fontSize: 18, paddingTop: 8 }}>Total</dt>
-            <dd style={{ margin: 0, textAlign: 'right', fontWeight: 700, fontSize: 18, paddingTop: 8, color: '#34d399' }}>
+            <dd style={{ margin: 0, textAlign: 'right', fontWeight: 700, fontSize: 18, paddingTop: 8, color: COLORS.successLight }}>
               {formatGs(factura.total_general)}
             </dd>
             {Number(factura.vuelto) > 0 && (
@@ -254,7 +255,7 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
             <button className="btn-ghost" onClick={() => setAnularOpen(false)} disabled={anulando}>Cancelar</button>
             <button
               className="btn-ghost"
-              style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+              style={{ color: COLORS.error, borderColor: tint('error', 0.4) }}
               onClick={handleAnular}
               disabled={anulando}
             >

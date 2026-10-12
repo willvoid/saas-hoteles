@@ -5,6 +5,7 @@ import type { TarifaBorrador } from './TarifaForm';
 import { DataTable, Column } from '../components/DataTable';
 import { ModuleLayout } from '../components/ModuleLayout';
 import '../index.css';
+import { COLORS, tint } from '../constants/colors';
 
 interface ManageTarifasProps {
   onBack: () => void;
@@ -121,7 +122,7 @@ export default function ManageTarifas({
     {
       header: 'Precio Base',
       render: (tar: any) => (
-        <span style={{ color: '#10b981', fontWeight: 'bold' }}>
+        <span style={{ color: COLORS.success, fontWeight: 'bold' }}>
           Gs. {tar.precio_base.toLocaleString()}
         </span>
       )
@@ -130,8 +131,8 @@ export default function ManageTarifas({
       header: 'Estado',
       render: (tar: any) => (
         <span style={{ 
-          color: tar.estado === 'Activa' ? '#10b981' : '#ef4444', 
-          backgroundColor: tar.estado === 'Activa' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+          color: tar.estado === 'Activa' ? COLORS.success : COLORS.error, 
+          backgroundColor: tar.estado === 'Activa' ? tint('success', 0.1) : tint('error', 0.1),
           padding: '4px 8px',
           borderRadius: '12px',
           fontSize: '12px',
@@ -165,9 +166,9 @@ export default function ManageTarifas({
               width: 'auto', 
               padding: '6px 12px', 
               fontSize: '13px', 
-              background: 'rgba(59, 130, 246, 0.2)', 
-              color: '#60a5fa',
-              border: '1px solid rgba(59, 130, 246, 0.4)'
+              background: tint('primary', 0.2), 
+              color: COLORS.primaryLight,
+              border: `1px solid ${tint('primary', 0.4)}`
             }}
           >
             Editar

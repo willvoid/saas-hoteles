@@ -1,4 +1,5 @@
 import { Modal } from './Modal';
+import { COLORS, tint } from '../constants/colors';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -31,7 +32,7 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const dangerStyle =
     variant === 'danger'
-      ? { color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' }
+      ? { color: COLORS.error, borderColor: tint('error', 0.4) }
       : undefined;
 
   return (

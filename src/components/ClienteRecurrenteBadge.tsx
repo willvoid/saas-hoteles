@@ -1,5 +1,6 @@
 import React from 'react';
 import { RotateCw, User } from 'lucide-react';
+import { COLORS, tint } from '../constants/colors';
 
 interface ClienteRecurrenteBadgeProps {
   isRecurrente: boolean;
@@ -22,15 +23,15 @@ export function ClienteRecurrenteBadge({
 
   const badgeStyle: React.CSSProperties = isRecurrente
     ? {
-        backgroundColor: 'rgba(16, 185, 129, 0.14)',
-        color: '#10b981',
-        border: '1px solid rgba(16, 185, 129, 0.35)',
-        boxShadow: '0 0 10px rgba(16, 185, 129, 0.1)',
+        backgroundColor: tint('success', 0.14),
+        color: COLORS.success,
+        border: `1px solid ${tint('success', 0.35)}`,
+        boxShadow: `0 0 10px ${tint('success', 0.1)}`,
       }
     : {
-        backgroundColor: 'rgba(148, 163, 184, 0.12)',
-        color: '#94a3b8',
-        border: '1px solid rgba(148, 163, 184, 0.25)',
+        backgroundColor: tint('textSecondary', 0.12),
+        color: COLORS.textSecondary,
+        border: `1px solid ${tint('textSecondary', 0.25)}`,
       };
 
   const displayText = isRecurrente
