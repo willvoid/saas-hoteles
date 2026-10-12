@@ -21,6 +21,7 @@ supabase/migrations/
   0010_storage               buckets y policies por prefijo de tenant
   0011_privilegios           privilegios minimos y EXECUTE de cada funcion
   0012_guardas_ddl           event trigger: RLS en tablas nuevas, sin EXECUTE en funciones nuevas
+  0013_multi_hotel           una cuenta, varios hoteles (un perfil por hotel) y fn_mis_hoteles
 supabase/seed.sql            catalogos minimos (solo desarrollo / respaldo)
 tests/aislamiento.sql        suite de aislamiento entre dos tenants
 ```
@@ -105,6 +106,8 @@ para cada catalogo con identidad) y verificar que existan los cargos
   `user_metadata = { nombre, documento, telefono, usuario, fk_tipo_doc }`. El
   trigger `handle_new_user` crea el perfil. Valida que el llamador este activo y
   que un gerente no asigne el cargo de administrador. Detalle abajo.
+- **switch-hotel / create-hotel (implementadas):** cambian el hotel activo de la
+  cuenta y crean un hotel nuevo. Ver "Multi-hotel".
 
 ### admin-create-user
 
@@ -184,13 +187,66 @@ un usuario desde la pantalla "Usuarios": la app llama a la funcion con
 `supabase.functions.invoke`. Esta funcion **no se probo contra un proyecto de
 Supabase** al escribirse: los tests cubren solo `validation.ts`.
 
+## Multi-hotel
+
+Una misma cuenta de Auth puede tener acceso a varios hoteles, como el selector de
+empresas de FacturaSend: tras el login se lista cada hotel como una tarjeta, una
+tarjeta "+" crea otro y al elegir una se entra a su panel.
+
+**Modelo.** Cada hotel de la cuenta es un perfil `usuario` propio (con su cargo),
+unico por `(auth_id, tenant_id)`. El hotel **activo** sigue siendo
+`app_metadata.tenant_id` del JWT: `current_tenant_id()`, las policies y los
+helpers no cambian. Un cargo rige solo dentro de su hotel: `current_user_role()`
+mira unicamente el perfil del hotel activo (antes tomaba cualquiera de la
+cuenta, lo que habria dejado heredar un cargo de un hotel en otro).
+
+| Pieza | Que hace |
+|---|---|
+| `fn_mis_hoteles()` | Lista los hoteles de la cuenta (cargo, estado y cual es el activo). Oculta la plantilla. Solo `authenticated`. |
+| `current_es_miembro()` | La cuenta tiene un perfil activo en algun hotel no suspendido. Con `current_usuario_activo()` decide quien lee los catalogos, para poder elegir otro hotel si el activo esta suspendido. |
+| `switch-hotel` | Valida que la cuenta tenga un perfil activo en el hotel pedido y que no este suspendido; escribe `app_metadata.tenant_id` con la admin API. `{ "tenant_id": 7 }` -> `{ "ok": true }`. |
+| `create-hotel` | Crea un hotel con `fn_provision_tenant`, con la cuenta como administradora (el `auth_id` siempre es el del llamador). Devuelve `201 { "ok": true, "tenant_id": 8 }`. |
+
+Despues de `switch-hotel` o `create-hotel` el cliente llama a
+`supabase.auth.refreshSession()` para recibir un token con el hotel nuevo.
+`create-hotel` deja el hotel creado como activo (lo hace `fn_provision_tenant`).
+
+**Reglas de `create-hotel`:** solo puede crear hoteles una cuenta que sea
+administradora en todos los suyos (o que aun no tenga ninguno), asi el personal
+creado por un hotel no abre hoteles de prueba; maximo 5 hoteles por cuenta
+(`MAX_HOTELS_PER_ACCOUNT`); el RUC es unico entre todos los hoteles y el
+identificador (slug) no puede estar reservado ni en uso.
+
+**Despliegue:** `supabase db push` para 0013 y, desde `saas-db/`:
+
+```bash
+supabase functions deploy switch-hotel --use-api
+supabase functions deploy create-hotel --use-api
+```
+
+Ambas usan `supabase/functions/_shared/` (se despliega junto con la funcion) y los
+secretos que inyecta el runtime, igual que `admin-create-user`. Despues de
+aplicar 0013 hay que volver a desplegar `admin-create-user`: ahora acota la
+busqueda del perfil por hotel.
+
+**Limites a tener presentes:**
+
+- El hotel activo es de **toda la cuenta**: otra pestana o dispositivo pasa al
+  hotel nuevo en su proximo refresco de token.
+- Quitar a alguien de un hotel es poner su perfil en `Inactivo` en ese hotel. Borrar
+  la cuenta de Auth desactiva **todos** sus perfiles (`handle_deleted_user`).
+- Una cuenta sin ningun hotel no puede crear el primero desde la app (no lee los
+  catalogos): eso es el alta publica (`register-tenant`, pendiente).
+- `admin-create-user` sigue respondiendo 409 si el correo ya existe: no suma una
+  cuenta existente a otro hotel.
+
 ## Cambios obligatorios en el frontend
 
 El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado contra
 `src/`:
 
-- **Login** (`Login.tsx`): llama a `resolve_login_email`, que ya no existe. El
-  login pasa a ser por correo.
+- **Login** (`Login.tsx`): ~~llamaba a `resolve_login_email`~~. Resuelto: el login ya
+  es por correo (`signInWithPassword`) y desemboca en `/hoteles`.
 - **Landing:** `fn_registrar_reserva_landing` recibe `p_slug`, y las lecturas
   anonimas directas (`tipo_habitacion`, `tarifas`, `habitaciones`, `reservas`...)
   se reemplazan por `fn_landing_catalogo` y `fn_landing_ocupacion`. Hace falta
@@ -210,8 +266,8 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
   Los demas embeds con pista de columna apuntan a catalogos (FK simple) y siguen
   igual; los `usuario!apertura_cierre_caja_fk_usuario_fkey` ya usan el nombre
   de constraint y no cambian.
-- **Sesion:** `SessionUser` necesita el tenant. La pestana de edicion de `cargo`
-  se retira (los catalogos son de solo lectura).
+- **Sesion:** ~~`SessionUser` necesita el tenant~~ (resuelto: `SessionUser.tenant`).
+  La pestana de edicion de `cargo` se retira (los catalogos son de solo lectura).
 - **Reservas web:** `fk_usuario = 1` en `Step4Client.tsx` y `BookingContext.tsx`
   deja de usarse; la reserva se atribuye a `tenants.fk_usuario_web`.
 
@@ -246,6 +302,9 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
   caja por establecimiento, `usuario` por tenant, codigo de reserva por tenant.
 - `guard_cargo_admin` se instala desde el inicio y ademas impide reasignar
   `tenant_id` o `auth_id` de un perfil.
+- Desde 0013 una cuenta puede tener un perfil por hotel: `usuario` es unico por
+  `(auth_id, tenant_id)` y el correo por `(tenant_id, correo)`; Auth sigue
+  exigiendo correo unico global. Ver "Multi-hotel".
 
 ## Decisiones abiertas
 
@@ -267,12 +326,23 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
   por establecimiento y tipo de factura, `nro_asiento`). Conviene sumarlas cuando
   se confirme que el frontend no reutiliza numeros.
 - `fk_inmueble` en `facturas` sigue sin FK, igual que antes; se resuelve en la fase SIFEN.
+- **Hoteles de prueba sin limite real:** `create-hotel` solo topa 5 hoteles por
+  cuenta. Sin captcha ni rate limit una cuenta puede encadenar altas; sumarlos
+  junto con `register-tenant`.
+- **Hotel activo por cuenta, no por sesion.** Un hook de access token permitiria un
+  hotel distinto por sesion, a costa de que un error en el hook bloquee todos los
+  logins y refrescos. Se eligio `switch-hotel` por su menor riesgo operativo.
 
 ## Pruebas
 
 ```bash
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/aislamiento.sql
 ```
+
+Requiere las migraciones 0001-0013 y `seed.sql`. Incluye la seccion "Una cuenta,
+dos hoteles" (cargo por hotel, visibilidad, `fn_mis_hoteles`, catalogos con el
+hotel activo suspendido, trigger de perfiles y alta de un hotel para una cuenta
+existente).
 
 Corre en una transaccion que se revierte. Insertar en `auth.users` requiere un
 rol con permiso: usar una base local o de staging, no produccion.
