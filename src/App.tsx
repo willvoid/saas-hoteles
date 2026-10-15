@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import LandingPage from './pages/LandingPage';
+import Home from './pages/Home';
 import TenantSuspended from './pages/TenantSuspended';
 import HotelSelect from './pages/HotelSelect';
 import { getCurrentSession, onAuthStateChange, signOut, resolveSession } from './services/authService';
@@ -127,7 +128,7 @@ function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/" element={<Home isSignedIn={hasSession} />} />
       <Route path="/h/:slug" element={<LandingPage />} />
       <Route
         path="/login"
