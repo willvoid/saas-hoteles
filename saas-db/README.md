@@ -98,10 +98,18 @@ para cada catalogo con identidad) y verificar que existan los cargos
 
 ## Flujos de servidor que consumen esta base (edge functions)
 
-- **register-tenant (pendiente):** crear la cuenta de Auth del administrador con la admin
-  API (sin tenant) -> `select fn_provision_tenant(<payload>)` -> si falla, borrar
-  la cuenta de Auth. Necesita captcha, rate limit y verificacion de correo. El
-  payload esta documentado en el encabezado de 0008.
+- **register-tenant (implementada):** alta publica. Valida Cloudflare Turnstile,
+  aplica rate limit (`fn_registro_rate_limit`, migracion 0015: 5/hora por IP y
+  3/hora por correo), crea la cuenta de Auth sin confirmar, ejecuta
+  `fn_provision_tenant` (hotel en trial de 30 dias) y, si falla, borra la cuenta.
+  Envia el correo de confirmacion con `auth.resend`. Responde igual si el correo
+  ya existe (sin enumeracion de cuentas). Despliegue:
+  `supabase functions deploy register-tenant --use-api --no-verify-jwt` y
+  `supabase secrets set TURNSTILE_SECRET=...`. Frontend: `VITE_TURNSTILE_SITE_KEY`
+  (clave publica) y `VITE_WHATSAPP_NUMBER` (opcional, boton de contacto).
+  La landing lee los planes con `fn_planes_publicos()` y el wizard los catalogos
+  con `fn_catalogos_registro()` / `fn_ubicaciones_registro()`: todas publicas
+  (anon) y solo lectura. Sin ejecutar contra un stack real de Supabase todavia.
 - **admin-create-user (implementada):** deriva el tenant del llamador (nunca del
   body) y crea la cuenta con `auth.admin.createUser` con
   `app_metadata = { tenant_id, fk_cargo }` y
@@ -238,7 +246,7 @@ busqueda del perfil por hotel.
 - Quitar a alguien de un hotel es poner su perfil en `Inactivo` en ese hotel. Borrar
   la cuenta de Auth desactiva **todos** sus perfiles (`handle_deleted_user`).
 - Una cuenta sin ningun hotel no puede crear el primero desde la app (no lee los
-  catalogos): eso es el alta publica (`register-tenant`, pendiente).
+  catalogos): el primer hotel se crea en el alta publica (`register-tenant`).
 - `admin-create-user` sigue respondiendo 409 si el correo ya existe: no suma una
   cuenta existente a otro hotel.
 
