@@ -18,7 +18,7 @@
 --        T2 (0017) chart of accounts and categories
 --        T3 (0018) funds and credit invoices             (pending)
 --        T4 (0019) expenses, collections, payments, transfers (pending)
---        T5 (0020) month lock                            (pending)
+--        T5 (0020) month lock
 --        T6 (0021) reports                               (pending)
 --      Each task inserts its section right BEFORE the `FIN` marker at the end.
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -2217,6 +2217,575 @@ begin
                and not has_function_privilege('authenticated', 'public.tg_fn_documento_guarda()', 'execute')
                and not has_function_privilege('authenticated', 'public.fn_contabilizar_reverso(bigint, text, bigint, date)', 'execute'),
                'las funciones internas de 0019 no se pueden ejecutar desde el cliente');
+end $$;
+
+-- ═══ T5 · 0020 monthly lock ═══════════════════════════════════════════════════
+-- Hotel `hp` (plan pro) with its admin, gerente and receptionist; `hb` (plan
+-- basico, no accounting module) is the unrelated hotel. Months used: 2026-03
+-- (closed during the section), 2026-04 (stays open) and the current month
+-- (closed and reopened to prove the reversal date is guarded). Everything runs
+-- as superuser unless an actor is impersonated: the guards are triggers, so
+-- they apply to every role.
+
+-- The statement must fail with the month-lock error of the given YYYY-MM.
+create function t.cerrada(p_sql text, p_ym text, p_msg text) returns void language plpgsql as $$
+begin
+  perform t.falla_con(p_sql, '55000', 'El periodo ' || p_ym || ' esta cerrado', p_msg);
+end $$;
+
+-- ─── Fixtures: documents in 2026-03 and 2026-04 (nothing is closed yet) ───
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_cat bigint := t.g('hp_cat_egr')::bigint; v_prov bigint := t.g('hp_prov')::bigint;
+  v_fc bigint := t.g('hp_fcaja')::bigint; v_fb bigint := t.g('hp_fbanco')::bigint;
+  v_efe bigint := t.g('m_efe')::bigint;
+  v_n1 bigint; v_n2 bigint; v_id bigint;
+begin
+  -- Two fresh funds (no opening balance yet).
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Banco cierre A', 'banco') returning id into v_n1;
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Banco cierre B', 'banco') returning id into v_n2;
+  perform set_config('test.c_f1', v_n1::text, true);
+  perform set_config('test.c_f2', v_n2::text, true);
+
+  -- gastos: cash and credit, March and April.
+  perform set_config('test.g_mar',  t.gasto(v_t, 'contado', 110000, 0, 0, null, v_fc, v_cat, date '2026-03-10')::text, true);
+  perform set_config('test.g_abr',  t.gasto(v_t, 'contado', 110000, 0, 0, null, v_fc, v_cat, date '2026-04-10')::text, true);
+  perform set_config('test.g_abr2', t.gasto(v_t, 'contado', 110000, 0, 0, null, v_fc, v_cat, date '2026-04-11')::text, true);
+  perform set_config('test.gc_mar', t.gasto(v_t, 'credito', 110000, 0, 0, v_prov, null, v_cat, date '2026-03-10')::text, true);
+  perform set_config('test.gc_abr', t.gasto(v_t, 'credito', 110000, 0, 0, v_prov, null, v_cat, date '2026-04-10')::text, true);
+
+  -- pagos: one dated in each month.
+  insert into public.pagos (tenant_id, fecha, fk_gasto, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-03-12', t.g('gc_mar')::bigint, v_fc, 10000) returning id into v_id;
+  perform set_config('test.pg_mar', v_id::text, true);
+  insert into public.pagos (tenant_id, fecha, fk_gasto, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-04-12', t.g('gc_abr')::bigint, v_fc, 10000) returning id into v_id;
+  perform set_config('test.pg_abr', v_id::text, true);
+
+  -- facturas: credit ones (for cobros) and cash ones, March and April.
+  perform set_config('test.fc_mar', t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 110000, 0, 0, 10000, 110000,
+                                              0, 'EMITIDA', timestamptz '2026-03-10 12:00:00-03')::text, true);
+  perform set_config('test.fc_abr', t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 110000, 0, 0, 10000, 110000,
+                                              0, 'EMITIDA', timestamptz '2026-04-10 12:00:00-03')::text, true);
+  perform set_config('test.fi_mar', t.factura(v_t, v_estab, v_cli, v_turno, v_efe, 1, 110000, 0, 0, 10000, 110000,
+                                              0, 'EMITIDA', timestamptz '2026-03-11 12:00:00-03')::text, true);
+  perform set_config('test.fi_abr', t.factura(v_t, v_estab, v_cli, v_turno, v_efe, 1, 110000, 0, 0, 10000, 110000,
+                                              0, 'EMITIDA', timestamptz '2026-04-11 12:00:00-03')::text, true);
+  perform set_config('test.fi_abr2', t.factura(v_t, v_estab, v_cli, v_turno, v_efe, 1, 110000, 0, 0, 10000, 110000,
+                                               0, 'EMITIDA', timestamptz '2026-04-12 12:00:00-03')::text, true);
+
+  -- cobros: one dated in each month.
+  insert into public.cobros (tenant_id, fecha, fk_factura, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-03-12', t.g('fc_mar')::bigint, v_fc, 10000) returning id into v_id;
+  perform set_config('test.cb_mar', v_id::text, true);
+  insert into public.cobros (tenant_id, fecha, fk_factura, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-04-12', t.g('fc_abr')::bigint, v_fc, 10000) returning id into v_id;
+  perform set_config('test.cb_abr', v_id::text, true);
+
+  -- transferencias_fondos and saldos_iniciales_fondos.
+  insert into public.transferencias_fondos (tenant_id, fecha, fk_fondo_origen, fk_fondo_destino, monto)
+    values (v_t, date '2026-03-13', v_fc, v_fb, 1000) returning id into v_id;
+  perform set_config('test.tr_mar', v_id::text, true);
+  insert into public.transferencias_fondos (tenant_id, fecha, fk_fondo_origen, fk_fondo_destino, monto)
+    values (v_t, date '2026-04-13', v_fc, v_fb, 1000) returning id into v_id;
+  perform set_config('test.tr_abr', v_id::text, true);
+  insert into public.saldos_iniciales_fondos (tenant_id, fecha, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-03-01', v_n1, 5000) returning id into v_id;
+  perform set_config('test.sa_mar', v_id::text, true);
+  insert into public.saldos_iniciales_fondos (tenant_id, fecha, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-04-01', v_n2, 5000) returning id into v_id;
+  perform set_config('test.sa_abr', v_id::text, true);
+
+  perform t.ok(t.g('sa_abr') is not null, 'fixtures del cierre mensual creados');
+end $$;
+
+-- ─── periodos_cerrados: structure and privileges ──────────────────────────
+do $$
+begin
+  perform t.ok(to_regclass('public.periodos_cerrados') is not null, 'existe periodos_cerrados');
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.periodos_cerrados'::regclass),
+               'periodos_cerrados tiene RLS');
+  perform t.ok((select count(*) from information_schema.columns
+                where table_schema = 'public' and table_name = 'periodos_cerrados'
+                  and column_name in ('tenant_id', 'anio', 'mes', 'cerrado_por', 'cerrado_en')) = 5,
+               'periodos_cerrados tiene sus columnas');
+  perform t.ok(has_function_privilege('authenticated', 'public.fn_cerrar_mes(integer, integer)', 'execute')
+               and has_function_privilege('authenticated', 'public.fn_reabrir_mes(integer, integer)', 'execute'),
+               'authenticated ejecuta fn_cerrar_mes y fn_reabrir_mes');
+  perform t.ok(not has_function_privilege('anon', 'public.fn_cerrar_mes(integer, integer)', 'execute')
+               and not has_function_privilege('anon', 'public.fn_reabrir_mes(integer, integer)', 'execute'),
+               'anon no ejecuta fn_cerrar_mes ni fn_reabrir_mes');
+  perform t.ok(not has_function_privilege('authenticated', 'public.fn_periodo_cerrado(bigint, date)', 'execute')
+               and not has_function_privilege('anon', 'public.fn_periodo_cerrado(bigint, date)', 'execute')
+               and not has_function_privilege('authenticated', 'public.fn_fecha_negocio(timestamp with time zone)', 'execute')
+               and not has_function_privilege('anon', 'public.fn_fecha_negocio(timestamp with time zone)', 'execute'),
+               'fn_periodo_cerrado y fn_fecha_negocio no se ejecutan desde el cliente');
+  perform t.ok(not has_function_privilege('authenticated', 'public.tg_fn_periodo_guarda_fecha()', 'execute')
+               and not has_function_privilege('authenticated', 'public.tg_fn_periodo_guarda_factura()', 'execute')
+               and not has_function_privilege('authenticated', 'public.tg_fn_periodo_guarda_asiento()', 'execute')
+               and not has_function_privilege('authenticated', 'public.tg_fn_periodo_guarda_detalle()', 'execute'),
+               'las funciones guarda del cierre no se ejecutan desde el cliente');
+  perform t.ok(public.fn_fecha_negocio(timestamptz '2026-04-01 02:00:00+00') = date '2026-03-31',
+               'fn_fecha_negocio usa el dia de Asuncion, no el UTC');
+end $$;
+
+-- ─── fn_cerrar_mes / fn_reabrir_mes: who, when, how ───────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_hoy date := (now() at time zone 'America/Asuncion')::date;
+  v_sig date := (date_trunc('month', (now() at time zone 'America/Asuncion')::date) + interval '1 month')::date;
+  v_n bigint;
+begin
+  perform t.ok(not public.fn_periodo_cerrado(v_t, date '2026-03-15'), 'marzo esta abierto al principio');
+
+  -- Only the admin; the gerente, the receptionist and a basico hotel are refused.
+  perform t.actuar(t.g('hp_ger'), v_t);
+  perform t.falla_con('select public.fn_cerrar_mes(2026, 3)', '42501', 'administrador', 'el gerente no cierra meses');
+  perform t.falla_con('select public.fn_reabrir_mes(2026, 3)', '42501', 'administrador', 'el gerente no reabre meses');
+  perform t.volver();
+  perform t.actuar(t.g('hp_rec'), v_t);
+  perform t.falla_con('select public.fn_cerrar_mes(2026, 3)', '42501', 'administrador', 'la recepcionista no cierra meses');
+  perform t.volver();
+  perform t.actuar(t.g('hb_admin'), t.g('hb')::bigint);
+  perform t.falla_con('select public.fn_cerrar_mes(2026, 3)', '42501', 'contabilidad', 'el plan basico no cierra meses');
+  perform t.falla_con('select public.fn_reabrir_mes(2026, 3)', '42501', 'contabilidad', 'el plan basico no reabre meses');
+  perform t.volver();
+  perform t.anonimo();
+  perform t.falla('select public.fn_cerrar_mes(2026, 3)', '42501', 'anon no cierra meses');
+  perform t.volver();
+  perform t.ok(t.cuenta(format('select count(*) from public.periodos_cerrados where tenant_id = %s', v_t)) = 0,
+               'ningun intento fallido cerro un mes');
+
+  -- Validation (as the admin).
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform t.falla_con(format('select public.fn_cerrar_mes(%s, %s)', extract(year from v_sig)::int, extract(month from v_sig)::int),
+                      '22023', 'futuro', 'un mes futuro no se cierra');
+  perform t.falla('select public.fn_cerrar_mes(2026, 13)', '22023', 'el mes 13 no existe');
+  perform t.falla('select public.fn_cerrar_mes(2026, 0)', '22023', 'el mes 0 no existe');
+  perform t.falla('select public.fn_cerrar_mes(null, 3)', '22023', 'el anio es obligatorio');
+  perform t.falla('select public.fn_cerrar_mes(2026, null)', '22023', 'el mes es obligatorio');
+  perform t.falla('select public.fn_reabrir_mes(2026, 13)', '22023', 'tampoco se reabre el mes 13');
+  perform t.falla_con('select public.fn_reabrir_mes(2026, 3)', '55000', 'no esta cerrado', 'reabrir un mes abierto es un error');
+
+  -- Happy path.
+  perform public.fn_cerrar_mes(2026, 3);
+  perform t.volver();
+  perform t.ok(public.fn_periodo_cerrado(v_t, date '2026-03-01') and public.fn_periodo_cerrado(v_t, date '2026-03-31'),
+               'marzo queda cerrado de punta a punta');
+  perform t.ok(not public.fn_periodo_cerrado(v_t, date '2026-02-28') and not public.fn_periodo_cerrado(v_t, date '2026-04-01'),
+               'febrero y abril siguen abiertos');
+  perform t.ok(not public.fn_periodo_cerrado(t.g('hb')::bigint, date '2026-03-15'),
+               'cerrar marzo en un hotel no cierra marzo en otro');
+  perform t.ok((select (cerrado_por, anio, mes) = ((select id_usuario from public.usuario
+                                                     where tenant_id = v_t and auth_id = t.g('hp_admin')::uuid), 2026, 3)
+                from public.periodos_cerrados where tenant_id = v_t),
+               'el cierre guarda quien lo hizo');
+  perform t.ok((select cerrado_en from public.periodos_cerrados where tenant_id = v_t) <= now(), 'el cierre guarda cuando se hizo');
+
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform t.falla_con('select public.fn_cerrar_mes(2026, 3)', '55000', 'ya esta cerrado', 'cerrar dos veces el mismo mes es un error');
+  -- Reopen and close again.
+  perform public.fn_reabrir_mes(2026, 3);
+  perform t.volver();
+  perform t.ok(not public.fn_periodo_cerrado(v_t, date '2026-03-15'), 'reabrir deja marzo abierto');
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform public.fn_cerrar_mes(2026, 3);
+  perform t.volver();
+  perform t.ok(public.fn_periodo_cerrado(v_t, date '2026-03-15'), 'marzo se puede volver a cerrar');
+  perform t.ok(t.cuenta(format('select count(*) from public.periodos_cerrados where tenant_id = %s', v_t)) = 1,
+               'queda una sola fila de marzo');
+
+  -- A closed month in the far past and the current month are both valid targets.
+  perform t.ok(v_hoy is not null, 'fechas de referencia disponibles');
+end $$;
+
+-- ─── periodos_cerrados: reads and the table constraints ───────────────────
+do $$
+declare v_t bigint := t.g('hp')::bigint;
+begin
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform t.ok(t.cuenta('select count(*) from public.periodos_cerrados') = 1, 'el admin lee los meses cerrados de su hotel');
+  perform t.falla('insert into public.periodos_cerrados (anio, mes, cerrado_por) values (2026, 1, 1)', '42501',
+                  'el admin no inserta meses cerrados directo');
+  perform t.falla('update public.periodos_cerrados set mes = 4', '42501', 'el admin no edita meses cerrados directo');
+  perform t.falla('delete from public.periodos_cerrados', '42501', 'el admin no borra meses cerrados directo');
+  perform t.volver();
+  perform t.actuar(t.g('hp_ger'), v_t);
+  perform t.ok(t.cuenta('select count(*) from public.periodos_cerrados') = 1, 'el gerente lee los meses cerrados');
+  perform t.falla('delete from public.periodos_cerrados', '42501', 'el gerente no borra meses cerrados directo');
+  perform t.volver();
+  perform t.actuar(t.g('hp_rec'), v_t);
+  perform t.ok(t.cuenta('select count(*) from public.periodos_cerrados') = 0, 'la recepcionista no ve los meses cerrados');
+  perform t.volver();
+  perform t.actuar(t.g('hb_admin'), t.g('hb')::bigint);
+  perform t.ok(t.cuenta('select count(*) from public.periodos_cerrados') = 0, 'otro hotel no ve los cierres de este');
+  perform t.volver();
+  perform t.anonimo();
+  perform t.falla('select count(*) from public.periodos_cerrados', '42501', 'anon no lee los meses cerrados');
+  perform t.volver();
+
+  perform t.falla(format('insert into public.periodos_cerrados (tenant_id, anio, mes, cerrado_por) values (%s, 2026, 3, (select min(id_usuario) from public.usuario where tenant_id = %s))', v_t, v_t),
+                  '23505', 'un mes no se cierra dos veces (unique)');
+  perform t.falla(format('insert into public.periodos_cerrados (tenant_id, anio, mes, cerrado_por) values (%s, 2026, 13, (select min(id_usuario) from public.usuario where tenant_id = %s))', v_t, v_t),
+                  '23514', 'el mes debe estar entre 1 y 12');
+  perform t.falla(format('insert into public.periodos_cerrados (tenant_id, anio, mes, cerrado_por) values (%s, 2026, 5, (select min(id_usuario) from public.usuario where tenant_id = %s))', v_t, t.g('hb')),
+                  '23503', 'quien cierra debe ser del mismo hotel');
+end $$;
+
+-- ─── Guards: gastos ───────────────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_cat bigint := t.g('hp_cat_egr')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint;
+  v_g bigint; v_n bigint;
+begin
+  perform t.cerrada(format('select t.gasto(%s, ''contado'', 11000, 0, 0, null, %s, %s, date ''2026-03-20'')', v_t, v_fc, v_cat),
+                    '2026-03', 'no se registra un gasto en un mes cerrado');
+  perform t.cerrada(format('update public.gastos set observacion = ''x'' where id = %s', t.g('g_mar')),
+                    '2026-03', 'no se edita un gasto de un mes cerrado');
+  perform t.cerrada(format('update public.gastos set estado = ''ANULADO'' where id = %s', t.g('g_mar')),
+                    '2026-03', 'no se anula un gasto de un mes cerrado aunque hoy este abierto');
+  perform t.cerrada(format('delete from public.gastos where id = %s', t.g('g_mar')),
+                    '2026-03', 'no se borra un gasto de un mes cerrado');
+  perform t.cerrada(format('update public.gastos set fecha = date ''2026-03-02'' where id = %s', t.g('g_abr')),
+                    '2026-03', 'no se mueve un gasto de abril a un mes cerrado');
+  perform t.ok((select estado from public.gastos where id = t.g('g_mar')::bigint) = 'REGISTRADO'
+               and t.n_asientos(v_t, 'gasto_anulacion', t.g('g_mar')::bigint) = 0,
+               'el gasto de marzo sigue registrado y sin reverso');
+
+  -- The open month keeps working.
+  v_g := t.gasto(v_t, 'contado', 11000, 0, 0, null, v_fc, v_cat, date '2026-04-20');
+  perform t.ok(t.n_asientos(v_t, 'gasto', v_g) = 1, 'abril abierto: el gasto se registra y se contabiliza');
+  update public.gastos set observacion = 'abierto' where id = v_g;
+  perform t.ok((select observacion from public.gastos where id = v_g) = 'abierto', 'abril abierto: el gasto se edita');
+  perform t.falla_con(format('delete from public.gastos where id = %s', v_g), '55000', 'eliminar',
+                      'abril abierto: borrar sigue prohibido por 0019 (anular)');
+  update public.gastos set estado = 'ANULADO' where id = v_g;
+  perform t.ok((select estado from public.gastos where id = v_g) = 'ANULADO'
+               and t.n_asientos(v_t, 'gasto_anulacion', v_g) = 1
+               and not exists (select 1 from public.asientos where tenant_id = v_t and fk_origen = v_g
+                               and origen_tipo in ('gasto', 'gasto_anulacion') and estado <> 'ANULADO'),
+               'abril abierto: anular crea el reverso y deja ambos asientos ANULADO');
+  perform t.ok((select (a.fecha at time zone 'America/Asuncion')::date from public.asientos a
+                where a.tenant_id = v_t and a.origen_tipo = 'gasto_anulacion' and a.fk_origen = v_g)
+               = (now() at time zone 'America/Asuncion')::date,
+               'el reverso lleva la fecha de la anulacion (hoy)');
+
+  -- Unrelated hotel: the same March date is not closed there.
+  v_n := t.gasto(t.g('hb')::bigint, 'contado', 11000, 0, 0, null, t.g('hb_fcaja')::bigint, t.g('hb_cat_egr')::bigint, date '2026-03-10');
+  perform t.ok(v_n is not null, 'otro hotel registra gastos de marzo sin problema');
+end $$;
+
+-- ─── Guards: pagos ────────────────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint;
+  v_p bigint; v_p2 bigint; v_saldo numeric;
+begin
+  perform t.cerrada(format('insert into public.pagos (tenant_id, fecha, fk_gasto, fk_cuenta_fondo, monto) values (%s, date ''2026-03-20'', %s, %s, 1000)', v_t, t.g('gc_abr'), v_fc),
+                    '2026-03', 'no se registra un pago fechado en un mes cerrado');
+  perform t.cerrada(format('update public.pagos set observacion = ''x'' where id = %s', t.g('pg_mar')),
+                    '2026-03', 'no se edita un pago de un mes cerrado');
+  perform t.cerrada(format('update public.pagos set estado = ''ANULADO'' where id = %s', t.g('pg_mar')),
+                    '2026-03', 'no se anula un pago de un mes cerrado');
+  perform t.cerrada(format('delete from public.pagos where id = %s', t.g('pg_mar')),
+                    '2026-03', 'no se borra un pago de un mes cerrado');
+  perform t.cerrada(format('update public.gastos set estado = ''ANULADO'' where id = %s', t.g('gc_mar')),
+                    '2026-03', 'no se anula un gasto a credito de un mes cerrado');
+
+  -- A payment dated today on a credit expense of the closed month is allowed:
+  -- its own date is open and the balance move is not an edit of the expense.
+  select saldo_pendiente into v_saldo from public.gastos where id = t.g('gc_mar')::bigint;
+  v_p := t.pago(v_t, t.g('gc_mar')::bigint, v_fc, 20000);
+  perform t.ok((select saldo_pendiente from public.gastos where id = t.g('gc_mar')::bigint) = v_saldo - 20000,
+               'un pago de hoy sobre un gasto de un mes cerrado baja su saldo');
+  update public.pagos set estado = 'ANULADO' where id = v_p;
+  perform t.ok((select saldo_pendiente from public.gastos where id = t.g('gc_mar')::bigint) = v_saldo
+               and t.n_asientos(v_t, 'pago_anulacion', v_p) = 1,
+               'y anular ese pago de hoy devuelve el saldo y crea el reverso');
+
+  -- April stays open.
+  insert into public.pagos (tenant_id, fecha, fk_gasto, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-04-20', t.g('gc_abr')::bigint, v_fc, 1000) returning id into v_p2;
+  update public.pagos set observacion = 'abierto' where id = v_p2;
+  update public.pagos set estado = 'ANULADO' where id = t.g('pg_abr')::bigint;
+  perform t.ok((select estado from public.pagos where id = t.g('pg_abr')::bigint) = 'ANULADO'
+               and t.n_asientos(v_t, 'pago_anulacion', t.g('pg_abr')::bigint) = 1,
+               'abril abierto: se registra, edita y anula un pago');
+end $$;
+
+-- ─── Guards: facturas and cobros ──────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_efe bigint := t.g('m_efe')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint;
+  v_f bigint; v_c bigint; v_saldo numeric;
+begin
+  perform t.cerrada(format('select t.factura(%s, %s, %s, %s, %s, 1, 11000, 0, 0, 1000, 11000, 0, ''EMITIDA'', timestamptz ''2026-03-15 12:00:00-03'')',
+                           v_t, v_estab, v_cli, v_turno, v_efe),
+                    '2026-03', 'no se emite una factura fechada en un mes cerrado');
+  -- 02:00 UTC of April 1st is still March 31st in Asuncion: the business day rules.
+  perform t.cerrada(format('select t.factura(%s, %s, %s, %s, %s, 1, 11000, 0, 0, 1000, 11000, 0, ''EMITIDA'', timestamptz ''2026-04-01 02:00:00+00'')',
+                           v_t, v_estab, v_cli, v_turno, v_efe),
+                    '2026-03', 'la factura se fecha por el dia de Asuncion, no por el UTC');
+  perform t.cerrada(format('update public.facturas set observacion = ''x'' where id_factura = %s', t.g('fi_mar')),
+                    '2026-03', 'no se edita una factura de un mes cerrado');
+  perform t.cerrada(format('update public.facturas set estado = ''ANULADA'' where id_factura = %s', t.g('fi_mar')),
+                    '2026-03', 'no se anula una factura de un mes cerrado aunque hoy este abierto');
+  perform t.cerrada(format('delete from public.facturas where id_factura = %s', t.g('fi_mar')),
+                    '2026-03', 'no se borra una factura de un mes cerrado');
+  perform t.cerrada(format('update public.facturas set fecha_emision = timestamptz ''2026-03-02 12:00:00-03'' where id_factura = %s', t.g('fi_abr')),
+                    '2026-03', 'no se mueve una factura de abril a un mes cerrado');
+  perform t.ok((select estado from public.facturas where id_factura = t.g('fi_mar')::bigint) = 'EMITIDA'
+               and t.n_asientos(v_t, 'factura_anulacion', t.g('fi_mar')::bigint) = 0,
+               'la factura de marzo sigue emitida y sin reverso');
+
+  -- April stays open: insert at the boundary, edit and annul with reversal.
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, v_efe, 1, 11000, 0, 0, 1000, 11000, 0, 'EMITIDA', timestamptz '2026-04-01 12:00:00+00');
+  perform t.ok(t.n_asientos(v_t, 'factura', v_f) = 1, 'abril abierto: la factura se emite y se contabiliza');
+  update public.facturas set observacion = 'abierto' where id_factura = v_f;
+  update public.facturas set estado = 'ANULADA' where id_factura = v_f;
+  perform t.ok((select estado from public.facturas where id_factura = v_f) = 'ANULADA'
+               and t.n_asientos(v_t, 'factura_anulacion', v_f) = 1
+               and not exists (select 1 from public.asientos where tenant_id = v_t and fk_origen = v_f
+                               and origen_tipo in ('factura', 'factura_anulacion') and estado <> 'ANULADO'),
+               'abril abierto: anular una factura crea el reverso y deja ambos asientos ANULADO');
+
+  -- Cobros against the closed-month credit invoice.
+  perform t.cerrada(format('insert into public.cobros (tenant_id, fecha, fk_factura, fk_cuenta_fondo, monto) values (%s, date ''2026-03-20'', %s, %s, 1000)', v_t, t.g('fc_abr'), v_fc),
+                    '2026-03', 'no se registra un cobro fechado en un mes cerrado');
+  perform t.cerrada(format('update public.cobros set observacion = ''x'' where id = %s', t.g('cb_mar')),
+                    '2026-03', 'no se edita un cobro de un mes cerrado');
+  perform t.cerrada(format('update public.cobros set estado = ''ANULADO'' where id = %s', t.g('cb_mar')),
+                    '2026-03', 'no se anula un cobro de un mes cerrado');
+  perform t.cerrada(format('delete from public.cobros where id = %s', t.g('cb_mar')),
+                    '2026-03', 'no se borra un cobro de un mes cerrado');
+
+  -- A collection dated today on a closed-month invoice is allowed.
+  select saldo_pendiente into v_saldo from public.facturas where id_factura = t.g('fc_mar')::bigint;
+  v_c := t.cobro(v_t, t.g('fc_mar')::bigint, v_fc, 20000);
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = t.g('fc_mar')::bigint) = v_saldo - 20000,
+               'un cobro de hoy sobre una factura de un mes cerrado baja su saldo');
+  update public.cobros set estado = 'ANULADO' where id = v_c;
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = t.g('fc_mar')::bigint) = v_saldo
+               and t.n_asientos(v_t, 'cobro_anulacion', v_c) = 1,
+               'y anular ese cobro de hoy devuelve el saldo y crea el reverso');
+
+  -- April stays open for cobros.
+  update public.cobros set observacion = 'abierto' where id = t.g('cb_abr')::bigint;
+  update public.cobros set estado = 'ANULADO' where id = t.g('cb_abr')::bigint;
+  perform t.ok((select estado from public.cobros where id = t.g('cb_abr')::bigint) = 'ANULADO',
+               'abril abierto: se edita y anula un cobro');
+end $$;
+
+-- ─── Guards: transferencias_fondos and saldos_iniciales_fondos ────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint; v_fb bigint := t.g('hp_fbanco')::bigint;
+  v_id bigint;
+begin
+  perform t.cerrada(format('insert into public.transferencias_fondos (tenant_id, fecha, fk_fondo_origen, fk_fondo_destino, monto) values (%s, date ''2026-03-20'', %s, %s, 100)', v_t, v_fc, v_fb),
+                    '2026-03', 'no se registra una transferencia en un mes cerrado');
+  perform t.cerrada(format('update public.transferencias_fondos set observacion = ''x'' where id = %s', t.g('tr_mar')),
+                    '2026-03', 'no se edita una transferencia de un mes cerrado');
+  perform t.cerrada(format('update public.transferencias_fondos set estado = ''ANULADO'' where id = %s', t.g('tr_mar')),
+                    '2026-03', 'no se anula una transferencia de un mes cerrado');
+  perform t.cerrada(format('delete from public.transferencias_fondos where id = %s', t.g('tr_mar')),
+                    '2026-03', 'no se borra una transferencia de un mes cerrado');
+  update public.transferencias_fondos set observacion = 'abierto' where id = t.g('tr_abr')::bigint;
+  update public.transferencias_fondos set estado = 'ANULADO' where id = t.g('tr_abr')::bigint;
+  perform t.ok((select estado from public.transferencias_fondos where id = t.g('tr_abr')::bigint) = 'ANULADO'
+               and t.n_asientos(v_t, 'transferencia_anulacion', t.g('tr_abr')::bigint) = 1,
+               'abril abierto: se edita y anula una transferencia');
+  insert into public.transferencias_fondos (tenant_id, fecha, fk_fondo_origen, fk_fondo_destino, monto)
+    values (v_t, date '2026-04-21', v_fc, v_fb, 100) returning id into v_id;
+  perform t.ok(t.n_asientos(v_t, 'transferencia', v_id) = 1, 'abril abierto: se registra una transferencia');
+
+  perform t.cerrada(format('insert into public.saldos_iniciales_fondos (tenant_id, fecha, fk_cuenta_fondo, monto) values (%s, date ''2026-03-02'', %s, 100)', v_t, t.g('c_f2')),
+                    '2026-03', 'no se registra un saldo inicial en un mes cerrado');
+  perform t.cerrada(format('update public.saldos_iniciales_fondos set observacion = ''x'' where id = %s', t.g('sa_mar')),
+                    '2026-03', 'no se edita un saldo inicial de un mes cerrado');
+  perform t.cerrada(format('update public.saldos_iniciales_fondos set estado = ''ANULADO'' where id = %s', t.g('sa_mar')),
+                    '2026-03', 'no se anula un saldo inicial de un mes cerrado');
+  perform t.cerrada(format('delete from public.saldos_iniciales_fondos where id = %s', t.g('sa_mar')),
+                    '2026-03', 'no se borra un saldo inicial de un mes cerrado');
+  update public.saldos_iniciales_fondos set observacion = 'abierto' where id = t.g('sa_abr')::bigint;
+  update public.saldos_iniciales_fondos set estado = 'ANULADO' where id = t.g('sa_abr')::bigint;
+  perform t.ok((select estado from public.saldos_iniciales_fondos where id = t.g('sa_abr')::bigint) = 'ANULADO'
+               and t.n_asientos(v_t, 'saldo_inicial_anulacion', t.g('sa_abr')::bigint) = 1,
+               'abril abierto: se edita y anula un saldo inicial');
+end $$;
+
+-- ─── Guards: asientos and detalle_asientos ────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cta1 bigint := (select fk_cuenta_contable from public.cuentas_fondos where id = t.g('c_f1')::bigint);
+  v_cta2 bigint := (select fk_cuenta_contable from public.cuentas_fondos where id = t.g('c_f2')::bigint);
+  v_a_mar bigint := (select id from public.asientos where tenant_id = v_t and origen_tipo = 'gasto' and fk_origen = t.g('g_mar')::bigint);
+  v_l_mar bigint; v_a bigint; v_l bigint; v_n bigint;
+begin
+  perform t.ok((select (fecha at time zone 'America/Asuncion')::date from public.asientos where id = v_a_mar) = date '2026-03-10',
+               'el asiento del gasto de marzo esta fechado en marzo (preparacion)');
+  select min(id) into v_l_mar from public.detalle_asientos where tenant_id = v_t and fk_asientos = v_a_mar;
+
+  -- Posting into a closed month fails through fn_contabilizar and through a direct insert.
+  perform t.cerrada(format('select public.fn_contabilizar(%s, date ''2026-03-15'', %s, ''manual marzo'', ''manual'', null, jsonb_build_array(jsonb_build_object(''fk_cuenta'', %s, ''debe'', 100), jsonb_build_object(''fk_cuenta'', %s, ''haber'', 100)))',
+                           v_t, v_estab, v_cta1, v_cta2),
+                    '2026-03', 'no se contabiliza un asiento manual en un mes cerrado');
+  perform t.cerrada(format('insert into public.asientos (tenant_id, fecha, descripcion, nro_asiento, fk_sucursal, estado, origen_tipo) values (%s, timestamptz ''2026-03-15 12:00:00-03'', ''directo'', public.fn_siguiente_nro_asiento(%s), %s, ''CONTABILIZADO'', ''manual'')',
+                           v_t, v_t, v_estab),
+                    '2026-03', 'no se inserta un asiento directo en un mes cerrado');
+  perform t.cerrada(format('update public.asientos set descripcion = ''x'' where id = %s', v_a_mar),
+                    '2026-03', 'no se edita un asiento de un mes cerrado');
+  perform t.cerrada(format('update public.asientos set estado = ''ANULADO'' where id = %s', v_a_mar),
+                    '2026-03', 'no se anula un asiento de un mes cerrado a mano');
+  perform t.cerrada(format('delete from public.asientos where id = %s', v_a_mar),
+                    '2026-03', 'no se borra un asiento de un mes cerrado');
+
+  -- Lines follow their entry.
+  perform t.cerrada(format('insert into public.detalle_asientos (tenant_id, fk_cuenta_contables, fk_asientos, debe, haber) values (%s, %s, %s, 100, 0)', v_t, v_cta1, v_a_mar),
+                    '2026-03', 'no se agregan lineas a un asiento de un mes cerrado');
+  perform t.cerrada(format('update public.detalle_asientos set fk_cuenta_contables = %s where id = %s', v_cta1, v_l_mar),
+                    '2026-03', 'no se editan lineas de un asiento de un mes cerrado');
+  perform t.cerrada(format('delete from public.detalle_asientos where id = %s', v_l_mar),
+                    '2026-03', 'no se borran lineas de un asiento de un mes cerrado');
+
+  -- The open month: a manual entry posts, edits and its lines can change.
+  v_a := public.fn_contabilizar(v_t, date '2026-04-15', v_estab, 'manual abril', 'manual', null,
+           jsonb_build_array(jsonb_build_object('fk_cuenta', v_cta1, 'debe', 100),
+                             jsonb_build_object('fk_cuenta', v_cta2, 'haber', 100)));
+  perform t.ok(v_a is not null, 'abril abierto: se contabiliza un asiento manual');
+  update public.asientos set descripcion = 'manual abril editado' where id = v_a;
+  select min(id) into v_l from public.detalle_asientos where tenant_id = v_t and fk_asientos = v_a and debe > 0;
+  update public.detalle_asientos set fk_cuenta_contables = v_cta2 where id = v_l;
+  update public.detalle_asientos set fk_cuenta_contables = v_cta1 where id = v_l;
+  perform t.ok((select descripcion from public.asientos where id = v_a) = 'manual abril editado',
+               'abril abierto: se editan el asiento y sus lineas');
+
+  -- An open-month entry cannot be moved into the closed month, nor its lines.
+  perform t.cerrada(format('update public.asientos set fecha = timestamptz ''2026-03-15 12:00:00-03'' where id = %s', v_a),
+                    '2026-03', 'no se mueve un asiento de abril a un mes cerrado');
+  perform t.cerrada(format('update public.detalle_asientos set fk_asientos = %s where id = %s', v_a_mar, v_l),
+                    '2026-03', 'no se mueve una linea hacia un asiento de un mes cerrado');
+  update public.asientos set estado = 'ANULADO' where id = v_a;
+  perform t.ok((select estado from public.asientos where id = v_a) = 'ANULADO', 'abril abierto: se anula un asiento manual');
+
+  -- Nothing of the closed month changed.
+  perform t.ok((select estado from public.asientos where id = v_a_mar) = 'CONTABILIZADO'
+               and (select count(*) from public.detalle_asientos where fk_asientos = v_a_mar) >= 2,
+               'el asiento de marzo y sus lineas quedaron intactos');
+end $$;
+
+-- ─── Closing the current month: reversal dated in a closed month fails ────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_cat bigint := t.g('hp_cat_egr')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint;
+  v_hoy date := (now() at time zone 'America/Asuncion')::date;
+  v_ym text := to_char((now() at time zone 'America/Asuncion')::date, 'YYYY-MM');
+  v_f bigint; v_g bigint;
+begin
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform public.fn_cerrar_mes(extract(year from v_hoy)::int, extract(month from v_hoy)::int);
+  perform t.volver();
+  perform t.ok(public.fn_periodo_cerrado(v_t, v_hoy), 'el mes actual se puede cerrar');
+
+  -- April documents are still open, but annulling them today would post the
+  -- reversal in the closed current month: the whole annulment is rolled back.
+  perform t.cerrada(format('update public.gastos set estado = ''ANULADO'' where id = %s', t.g('g_abr2')),
+                    v_ym, 'anular un gasto de abril falla si el reverso cae en el mes actual cerrado');
+  perform t.ok((select estado from public.gastos where id = t.g('g_abr2')::bigint) = 'REGISTRADO'
+               and t.n_asientos(v_t, 'gasto_anulacion', t.g('g_abr2')::bigint) = 0
+               and (select estado from public.asientos where tenant_id = v_t and origen_tipo = 'gasto' and fk_origen = t.g('g_abr2')::bigint) = 'CONTABILIZADO',
+               'el gasto de abril sigue registrado y su asiento sigue vigente');
+  perform t.cerrada(format('update public.facturas set estado = ''ANULADA'' where id_factura = %s', t.g('fi_abr2')),
+                    v_ym, 'anular una factura de abril falla si el reverso cae en el mes actual cerrado');
+  perform t.ok((select estado from public.facturas where id_factura = t.g('fi_abr2')::bigint) = 'EMITIDA'
+               and t.n_asientos(v_t, 'factura_anulacion', t.g('fi_abr2')::bigint) = 0,
+               'la factura de abril sigue emitida y sin reverso');
+
+  -- Anything dated today fails too: gasto, cobro and a new invoice by the receptionist.
+  perform t.cerrada(format('select t.gasto(%s, ''contado'', 11000, 0, 0, null, %s, %s, %L::date)', v_t, v_fc, v_cat, v_hoy),
+                    v_ym, 'el gasto de hoy falla con el mes actual cerrado');
+  perform t.cerrada(format('select t.cobro(%s, %s, %s, 1000)', v_t, t.g('fc_mar'), v_fc),
+                    v_ym, 'el cobro de hoy falla con el mes actual cerrado');
+  perform t.actuar(t.g('hp_rec'), v_t);
+  perform t.cerrada(format('select t.factura(%s, %s, %s, %s, %s, 1, 11000, 0, 0, 1000, 11000)',
+                           v_t, v_estab, v_cli, v_turno, t.g('m_efe')),
+                    v_ym, 'la recepcionista no puede facturar con el mes actual cerrado');
+  perform t.volver();
+
+  -- Reopening restores everything.
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform public.fn_reabrir_mes(extract(year from v_hoy)::int, extract(month from v_hoy)::int);
+  perform t.volver();
+  perform t.ok(not public.fn_periodo_cerrado(v_t, v_hoy), 'reabrir el mes actual lo deja abierto');
+  perform t.actuar(t.g('hp_rec'), v_t);
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 11000, 0, 0, 1000, 11000);
+  perform t.volver();
+  perform t.ok(t.n_asientos(v_t, 'factura', v_f) = 1, 'reabierto el mes actual la recepcionista vuelve a facturar');
+  v_g := t.gasto(v_t, 'contado', 11000, 0, 0, null, v_fc, v_cat, v_hoy);
+  perform t.ok(v_g is not null, 'reabierto el mes actual se registran gastos de hoy');
+  update public.gastos set estado = 'ANULADO' where id = t.g('g_abr2')::bigint;
+  update public.facturas set estado = 'ANULADA' where id_factura = t.g('fi_abr2')::bigint;
+  perform t.ok((select estado from public.gastos where id = t.g('g_abr2')::bigint) = 'ANULADO'
+               and (select estado from public.facturas where id_factura = t.g('fi_abr2')::bigint) = 'ANULADA'
+               and t.n_asientos(v_t, 'gasto_anulacion', t.g('g_abr2')::bigint) = 1
+               and t.n_asientos(v_t, 'factura_anulacion', t.g('fi_abr2')::bigint) = 1,
+               'reabierto el mes actual se anulan los documentos de abril con su reverso');
+end $$;
+
+-- ─── Unrelated tenants and reopening March ────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_hb bigint := t.g('hb')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hb_cli')::bigint; v_cat bigint := t.g('hp_cat_egr')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint;
+  v_f bigint; v_a bigint;
+begin
+  -- March is still closed for hp; hb is not affected (documents and entries).
+  v_f := t.factura(v_hb, t.g('hb_estab')::bigint, v_cli, t.g('hb_turno')::bigint, t.g('m_efe')::bigint, 1, 11000, 0, 0, 1000, 11000,
+                   0, 'EMITIDA', timestamptz '2026-03-15 12:00:00-03');
+  perform t.ok(t.n_asientos(v_hb, 'factura', v_f) = 1, 'otro hotel factura y contabiliza en marzo con marzo cerrado en hp');
+  update public.facturas set estado = 'ANULADA' where id_factura = v_f;
+  perform t.ok((select estado from public.facturas where id_factura = v_f) = 'ANULADA', 'otro hotel anula su factura de marzo');
+  perform t.ok(not public.fn_periodo_cerrado(v_hb, date '2026-03-15'), 'marzo sigue abierto en hb');
+  perform t.ok(not public.fn_periodo_cerrado(null, date '2026-03-15') and not public.fn_periodo_cerrado(v_t, null),
+               'fn_periodo_cerrado con null no cierra nada');
+
+  -- Reopen March: the same operations that failed now work.
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform public.fn_reabrir_mes(2026, 3);
+  perform t.volver();
+  perform t.ok(not public.fn_periodo_cerrado(v_t, date '2026-03-15')
+               and t.cuenta(format('select count(*) from public.periodos_cerrados where tenant_id = %s', v_t)) = 0,
+               'reabrir marzo lo deja abierto y sin filas');
+  perform t.ok(t.gasto(v_t, 'contado', 11000, 0, 0, null, v_fc, v_cat, date '2026-03-20') is not null,
+               'reabierto marzo: se registra un gasto');
+  update public.gastos set observacion = 'reabierto' where id = t.g('g_mar')::bigint;
+  update public.pagos set observacion = 'reabierto' where id = t.g('pg_mar')::bigint;
+  update public.cobros set observacion = 'reabierto' where id = t.g('cb_mar')::bigint;
+  update public.transferencias_fondos set observacion = 'reabierto' where id = t.g('tr_mar')::bigint;
+  update public.saldos_iniciales_fondos set observacion = 'reabierto' where id = t.g('sa_mar')::bigint;
+  update public.facturas set observacion = 'reabierto' where id_factura = t.g('fi_mar')::bigint;
+  perform t.ok((select observacion from public.facturas where id_factura = t.g('fi_mar')::bigint) = 'reabierto',
+               'reabierto marzo: se editan facturas, gastos, pagos, cobros, transferencias y saldos iniciales');
+  update public.gastos set estado = 'ANULADO' where id = t.g('g_mar')::bigint;
+  update public.facturas set estado = 'ANULADA' where id_factura = t.g('fi_mar')::bigint;
+  perform t.ok((select estado from public.gastos where id = t.g('g_mar')::bigint) = 'ANULADO'
+               and (select estado from public.facturas where id_factura = t.g('fi_mar')::bigint) = 'ANULADA'
+               and t.n_asientos(v_t, 'gasto_anulacion', t.g('g_mar')::bigint) = 1
+               and t.n_asientos(v_t, 'factura_anulacion', t.g('fi_mar')::bigint) = 1
+               and not exists (select 1 from public.asientos where tenant_id = v_t
+                               and fk_origen in (t.g('g_mar')::bigint) and origen_tipo in ('gasto', 'gasto_anulacion') and estado <> 'ANULADO'),
+               'reabierto marzo: se anulan documentos de marzo (original y reverso ANULADO)');
+  v_a := public.fn_contabilizar(v_t, date '2026-03-15', v_estab, 'manual marzo', 'manual', null,
+           jsonb_build_array(jsonb_build_object('fk_cuenta', (select fk_cuenta_contable from public.cuentas_fondos where id = t.g('c_f1')::bigint), 'debe', 100),
+                             jsonb_build_object('fk_cuenta', (select fk_cuenta_contable from public.cuentas_fondos where id = t.g('c_f2')::bigint), 'haber', 100)));
+  perform t.ok(v_a is not null, 'reabierto marzo: se contabilizan asientos manuales');
 end $$;
 
 -- ═══ FIN (later tasks add their sections before this line) ═══
