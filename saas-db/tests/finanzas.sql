@@ -168,6 +168,10 @@ begin
     if to_regclass('public.categorias_finanzas') is not null then
       delete from public.categorias_finanzas where tenant_id = v_t;
     end if;
+    -- 0018 hangs a fund (and its account) on every caja; they reference the chart.
+    if to_regclass('public.cuentas_fondos') is not null then
+      delete from public.cuentas_fondos where tenant_id = v_t;
+    end if;
     delete from public.cuentas_contables where tenant_id = v_t;
     insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable)
       values (v_t, 'Activo', '1', v_tipo, false) returning id into v_padre;
@@ -751,8 +755,8 @@ begin
   perform set_config('test.nuevo', v_t::text, true);
   perform t.ok((select plan from public.tenants where id = v_t) = 'basico', 'el hotel nuevo esta en plan basico');
 
-  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', v_t)) = 35,
-               'el hotel nuevo recibe las 35 cuentas');
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s and codigo !~ ''^1\.1\.01\.''', v_t)) = 35,
+               'el hotel nuevo recibe las 35 cuentas (sin contar las de sus fondos)');
   perform t.ok(not exists (
     select 1 from public.cuentas_contables c
     join public.cuentas_contables m on m.tenant_id = v_pl and m.id = c.id
@@ -805,7 +809,7 @@ begin
   -- The seed helper is a no-op on a hotel that already has accounts.
   perform public.fn_copiar_plan_cuentas_plantilla(v_t);
   perform public.fn_seed_tenant_desde_plantilla(v_t);
-  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', v_t)) = 35
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s and codigo !~ ''^1\.1\.01\.''', v_t)) = 35
                and t.cuenta(format('select count(*) from public.categorias_finanzas where tenant_id = %s', v_t)) = 17,
                'volver a sembrar un hotel con plan de cuentas no cambia nada');
 end $$;
@@ -932,6 +936,554 @@ begin
   perform t.volver();
   perform t.anonimo();
   perform t.falla('select count(*) from public.categorias_finanzas', '42501', 'anon no lee categorias');
+  perform t.volver();
+end $$;
+
+-- ═══ T3 · 0018 funds, credit invoices and invoice posting ═════════════════
+
+-- Helpers. `factura` inserts a header the way the app does (detail rows are
+-- not needed: posting reads the header only).
+create function t.factura(
+  p_tenant bigint, p_estab bigint, p_cliente bigint, p_turno bigint, p_modo bigint,
+  p_cond int, p_g10 numeric, p_g5 numeric, p_ex numeric, p_iva numeric, p_total numeric,
+  p_desc numeric default 0, p_estado text default 'EMITIDA',
+  p_fecha timestamptz default now()
+) returns bigint language plpgsql as $$
+declare v_id bigint;
+begin
+  insert into public.facturas
+    (tenant_id, fecha_emision, fk_cliente, condicion_venta, total_gravado_10, total_gravado_5,
+     total_exenta, total_iva, total_general, observacion, fk_monedas, fk_establecimientos,
+     fk_modo_pago, fk_tipo_factura, nro_secuencial, fk_turno, tipo_emision, estado,
+     efectivo, vuelto, descuento_global, fk_inmueble)
+  values
+    (p_tenant, p_fecha, p_cliente, p_cond, p_g10, p_g5, p_ex, p_iva, p_total, '',
+     (select min(id_monedas) from public.monedas), p_estab, p_modo,
+     (select min(id_tipo_factura) from public.tipo_factura),
+     (select coalesce(max(nro_secuencial), 0) + 1 from public.facturas where fk_establecimientos = p_estab),
+     p_turno, 1, p_estado, p_total, 0, p_desc, 1)
+  returning id_factura into v_id;
+  return v_id;
+end $$;
+
+-- Net debit minus credit of an origin's entries on the account with that key.
+create function t.mov(p_tenant bigint, p_tipo text, p_origen bigint, p_clave text) returns numeric
+language sql as $$
+  select coalesce(sum(d.debe - d.haber), 0)
+  from public.asientos a
+  join public.detalle_asientos d on d.tenant_id = a.tenant_id and d.fk_asientos = a.id
+  join public.cuentas_contables c on c.tenant_id = d.tenant_id and c.id = d.fk_cuenta_contables
+  where a.tenant_id = p_tenant and a.origen_tipo = p_tipo and a.fk_origen = p_origen and c.clave = p_clave
+$$;
+
+-- Same, by account id (fund accounts carry no key).
+create function t.mov_cta(p_tenant bigint, p_tipo text, p_origen bigint, p_cuenta bigint) returns numeric
+language sql as $$
+  select coalesce(sum(d.debe - d.haber), 0)
+  from public.asientos a
+  join public.detalle_asientos d on d.tenant_id = a.tenant_id and d.fk_asientos = a.id
+  where a.tenant_id = p_tenant and a.origen_tipo = p_tipo and a.fk_origen = p_origen
+    and d.fk_cuenta_contables = p_cuenta
+$$;
+
+create function t.n_asientos(p_tenant bigint, p_tipo text, p_origen bigint) returns bigint
+language sql as $$
+  select count(*) from public.asientos a
+  where a.tenant_id = p_tenant and a.origen_tipo = p_tipo and a.fk_origen = p_origen
+$$;
+
+create function t.n_lineas(p_tenant bigint, p_tipo text, p_origen bigint) returns bigint
+language sql as $$
+  select count(*) from public.asientos a
+  join public.detalle_asientos d on d.tenant_id = a.tenant_id and d.fk_asientos = a.id
+  where a.tenant_id = p_tenant and a.origen_tipo = p_tipo and a.fk_origen = p_origen
+$$;
+
+-- Ledger account of the fund attached to a caja.
+create function t.cta_caja(p_tenant bigint, p_caja bigint) returns bigint
+language sql as $$
+  select fk_cuenta_contable from public.cuentas_fondos where tenant_id = p_tenant and fk_caja = p_caja
+$$;
+
+-- Fixture hotels provisioned the real way (chart, caja and fund come with it):
+--   hp  plan pro (accounting module), admin + gerente + receptionist
+--   hb  plan basico (no module)
+--   hs  plan basico whose chart was removed (a hotel with an empty ledger)
+do $$
+declare
+  v_contrib bigint := (select min(id_tipo_contribuyente) from public.tipo_contribuyente);
+  v_regimen bigint := (select min(id_regimen) from public.tipo_regimen);
+  c_ger bigint := (select id_cargo from public.cargo where lower(cargo) = 'gerente' limit 1);
+  c_rec bigint := (select id_cargo from public.cargo where lower(cargo) = 'recepcionista' limit 1);
+  v_cod text; v_plan text; v_i int := 0; v_u uuid; v_res jsonb; v_t bigint; v_estab bigint;
+  v_caja bigint; v_us bigint; v_cli bigint; v_turno bigint;
+  v_ger uuid := gen_random_uuid(); v_rec uuid := gen_random_uuid();
+begin
+  foreach v_cod in array array['hp', 'hb', 'hs'] loop
+    v_i := v_i + 1;
+    v_plan := case v_cod when 'hp' then 'pro' else 'basico' end;
+    v_u := gen_random_uuid();
+    insert into auth.users (id, email) values (v_u, 'fin3-' || v_cod || '@f.test');
+    v_res := public.fn_provision_tenant(jsonb_build_object(
+      'tenant', jsonb_build_object('nombre', 'Hotel fin3 ' || v_cod, 'slug', 'fin3-' || v_cod),
+      'admin', jsonb_build_object('auth_id', v_u, 'nombre', 'Admin', 'documento', 'G' || v_i, 'fk_tipo_doc', 1),
+      'empresa', jsonb_build_object('ruc', '8300000' || v_i || '-1', 'razon_social', 'Hotel G',
+                                    'fk_contribuyente', v_contrib, 'fk_regimen', v_regimen),
+      'establecimiento', jsonb_build_object('direccion', 'Calle', 'fk_barrio', 1)));
+    v_t := (v_res ->> 'tenant_id')::bigint;
+    v_estab := (v_res ->> 'id_establecimiento')::bigint;
+    v_caja := (v_res ->> 'id_caja')::bigint;
+    perform public.fn_activar_plan(v_t, v_plan, 'mensual', null, 'test-fin3-' || v_cod);
+
+    if v_cod = 'hs' then
+      delete from public.cuentas_fondos where tenant_id = v_t;
+      delete from public.categorias_finanzas where tenant_id = v_t;
+      delete from public.cuentas_contables where tenant_id = v_t;
+    end if;
+
+    select id_usuario into v_us from public.usuario where tenant_id = v_t and auth_id = v_u;
+    insert into public.clientes (tenant_id, razon_social, documento, celular, es_proveedor_del_estado)
+      values (v_t, 'Cliente ' || v_cod, '1234567', '0981000000', false) returning id_cliente into v_cli;
+    insert into public.apertura_cierre_caja (tenant_id, monto_inicial, monto_final, fk_usuario, fk_caja)
+      values (v_t, 0, 0, v_us, v_caja) returning id_turno into v_turno;
+
+    perform set_config('test.' || v_cod, v_t::text, true);
+    perform set_config('test.' || v_cod || '_admin', v_u::text, true);
+    perform set_config('test.' || v_cod || '_estab', v_estab::text, true);
+    perform set_config('test.' || v_cod || '_caja', v_caja::text, true);
+    perform set_config('test.' || v_cod || '_cli', v_cli::text, true);
+    perform set_config('test.' || v_cod || '_turno', v_turno::text, true);
+  end loop;
+
+  v_t := t.g('hp')::bigint;
+  insert into auth.users (id, email, raw_app_meta_data, raw_user_meta_data) values
+    (v_ger, 'fin3-ger@f.test', jsonb_build_object('tenant_id', v_t, 'fk_cargo', c_ger),
+       jsonb_build_object('nombre', 'Gerente', 'documento', 'G11', 'fk_tipo_doc', 1)),
+    (v_rec, 'fin3-rec@f.test', jsonb_build_object('tenant_id', v_t, 'fk_cargo', c_rec),
+       jsonb_build_object('nombre', 'Recepcion', 'documento', 'G12', 'fk_tipo_doc', 1));
+  perform set_config('test.hp_ger', v_ger::text, true);
+  perform set_config('test.hp_rec', v_rec::text, true);
+
+  perform set_config('test.m_efe', (select id_modo_pago::text from public.modo_pago where descripcion = 'Efectivo'), true);
+  perform set_config('test.m_tar', (select id_modo_pago::text from public.modo_pago where descripcion = 'Tarjeta'), true);
+  perform set_config('test.m_tra', (select id_modo_pago::text from public.modo_pago where descripcion = 'Transferencia'), true);
+  perform set_config('test.motivo', (select min(id_motivos)::text from public.motivos_emision), true);
+end $$;
+
+-- ─── Funds: every caja gets one, each with its own ledger account ─────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint;
+  v_dis bigint; v_f bigint; v_cta bigint; v_caja2 bigint; v_fb bigint; v_n bigint;
+begin
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.cuentas_fondos'::regclass)
+               and (select relrowsecurity from pg_class where oid = 'public.medios_pago_fondo'::regclass),
+               'cuentas_fondos y medios_pago_fondo tienen RLS');
+  perform t.ok(not has_table_privilege('anon', 'public.cuentas_fondos', 'select')
+               and not has_table_privilege('anon', 'public.medios_pago_fondo', 'select'),
+               'anon no tiene acceso a las tablas de fondos');
+
+  v_dis := public.fn_cuenta_por_clave(v_t, 'DISPONIBILIDADES');
+
+  -- Provisioning created the caja before the chart: the seed still gives it a fund.
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_fondos where tenant_id = %s', v_t)) = 1,
+               'el hotel nuevo tiene un fondo (por su unica caja)');
+  select f.id, f.fk_cuenta_contable into v_f, v_cta
+  from public.cuentas_fondos f where f.tenant_id = v_t;
+  perform t.ok((select (tipo, fk_caja, nombre, activo) = ('caja_turno', t.g('hp_caja')::bigint, 'Caja principal', true)
+               from public.cuentas_fondos where id = v_f),
+               'el fondo de la caja es caja_turno, activo y se llama como la caja');
+  perform t.ok((select (fk_cuenta_padre, imputable, activo, codigo, nombre, clave is null)
+                       = (v_dis, true, true, '1.1.01.01', 'Caja principal', true)
+                from public.cuentas_contables where id = v_cta),
+               'su cuenta es hija imputable de Disponibilidades (1.1.01.01), sin clave de sistema');
+
+  -- A new caja creates its fund and the next account code.
+  insert into public.caja (tenant_id, nro_caja, descripcion_caja, fk_establecimientos)
+    values (v_t, 2, 'Caja de la noche', t.g('hp_estab')::bigint) returning id_caja into v_caja2;
+  perform set_config('test.hp_caja2', v_caja2::text, true);
+  perform t.ok((select (f.tipo, f.nombre) = ('caja_turno', 'Caja de la noche')
+                       and c.codigo = '1.1.01.02' and c.fk_cuenta_padre = v_dis and c.imputable
+                from public.cuentas_fondos f join public.cuentas_contables c on c.id = f.fk_cuenta_contable
+                where f.tenant_id = v_t and f.fk_caja = v_caja2),
+               'una caja nueva crea su fondo y su cuenta 1.1.01.02');
+
+  -- A fund inserted without account gets one named like the fund.
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo)
+    values (v_t, 'Banco Itau', 'banco') returning id into v_fb;
+  perform set_config('test.hp_fbanco', v_fb::text, true);
+  perform t.ok((select (c.codigo, c.nombre, c.imputable, c.activo, c.fk_cuenta_padre, c.fk_tipo_cuenta)
+                       = ('1.1.01.03', 'Banco Itau', true, true, v_dis,
+                          (select fk_tipo_cuenta from public.cuentas_contables where id = v_dis))
+                from public.cuentas_fondos f join public.cuentas_contables c on c.id = f.fk_cuenta_contable
+                where f.id = v_fb),
+               'un fondo banco crea su cuenta hija con el nombre del fondo');
+
+  -- The parent is untouched and the lookup by key still resolves to it.
+  perform t.ok(public.fn_cuenta_por_clave(v_t, 'DISPONIBILIDADES') = v_dis
+               and not (select imputable from public.cuentas_contables where id = v_dis)
+               and t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s and clave = ''DISPONIBILIDADES''', v_t)) = 1,
+               'Disponibilidades sigue siendo el unico padre no imputable con esa clave');
+  perform t.ok(t.cuenta(format('select count(distinct codigo) from public.cuentas_contables where tenant_id = %s and fk_cuenta_padre = %s', v_t, v_dis))
+               = t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s and fk_cuenta_padre = %s', v_t, v_dis)),
+               'los codigos de las cuentas de fondos no se repiten');
+
+  -- Constraints
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (%s, ''Banco Itau'', ''banco'')', v_t),
+                  '23505', 'el nombre del fondo es unico por hotel');
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (%s, ''Rara'', ''otro'')', v_t),
+                  '23514', 'el tipo de fondo es caja_turno, caja_chica o banco');
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (%s, ''  '', ''banco'')', v_t),
+                  '23514', 'el nombre del fondo no puede estar vacio');
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo, fk_caja) values (%s, ''Banco con caja'', ''banco'', %s)', v_t, t.g('hp_caja')),
+                  '23514', 'solo un fondo caja_turno apunta a una caja');
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (%s, ''Turno sin caja'', ''caja_turno'')', v_t),
+                  '23514', 'un fondo caja_turno necesita su caja');
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo, fk_caja) values (%s, ''Otra de la misma'', ''caja_turno'', %s)', v_t, t.g('hp_caja')),
+                  '23505', 'una caja tiene a lo sumo un fondo por hotel');
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo, fk_caja) values (%s, ''Caja ajena'', ''caja_turno'', %s)', v_t, t.g('hb_caja')),
+                  '23503', 'un fondo no puede apuntar a la caja de otro hotel');
+
+  -- A name already taken by another fund does not break the caja trigger.
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Caja 3', 'caja_chica');
+  insert into public.caja (tenant_id, nro_caja, fk_establecimientos)
+    values (v_t, 3, t.g('hp_estab')::bigint) returning id_caja into v_caja2;
+  perform t.ok(exists (select 1 from public.cuentas_fondos where tenant_id = v_t and fk_caja = v_caja2
+                       and nombre = 'Caja 3 #' || v_caja2),
+               'si el nombre de la caja ya existe, el fondo lleva el id de la caja como sufijo');
+end $$;
+
+-- ─── Funds: hotel without a usable chart, backfill ───────────────────────
+do $$
+declare
+  v_pro bigint := t.g('pro')::bigint;   -- T1 fixture hotel: chart without DISPONIBILIDADES
+  v_t bigint := t.g('hp')::bigint;
+  v_antes bigint; v_total bigint; v_f bigint;
+begin
+  insert into public.caja (tenant_id, nro_caja, fk_establecimientos)
+    values (v_pro, 2, t.g('pro_estab')::bigint);
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_fondos where tenant_id = %s', v_pro)) = 0,
+               'una caja de un hotel sin Disponibilidades no crea fondo y no falla');
+  perform t.falla_con(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (%s, ''Banco X'', ''banco'')', v_pro),
+                      'P0002', 'DISPONIBILIDADES', 'crear un fondo sin cuenta Disponibilidades da un error claro');
+
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_fondos where tenant_id = %s', t.g('hs'))) = 0,
+               'un hotel sin plan de cuentas no recibe fondos');
+  perform public.fn_asegurar_fondos_cajas(t.g('hs')::bigint);
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_fondos where tenant_id = %s', t.g('hs'))) = 0,
+               'la siembra de fondos omite un hotel sin plan de cuentas');
+
+  -- Backfill: the fund of a caja disappears, the helper restores it, twice is a no-op.
+  select f.id into v_f from public.cuentas_fondos f where f.tenant_id = v_t and f.fk_caja = t.g('hp_caja')::bigint;
+  delete from public.cuentas_fondos where id = v_f;
+  perform t.ok(not exists (select 1 from public.cuentas_fondos where tenant_id = v_t and fk_caja = t.g('hp_caja')::bigint),
+               'el fondo de la caja principal se borro (preparacion del backfill)');
+  perform public.fn_asegurar_fondos_cajas(v_t);
+  perform t.ok(exists (select 1 from public.cuentas_fondos where tenant_id = v_t and fk_caja = t.g('hp_caja')::bigint
+                       and nombre = 'Caja principal'),
+               'el backfill recrea el fondo que falta');
+  v_antes := t.cuenta('select count(*) from public.cuentas_fondos');
+  v_total := t.cuenta('select count(*) from public.cuentas_contables');
+  perform public.fn_asegurar_fondos_cajas(v_t);
+  perform public.fn_asegurar_fondos_cajas(t.g('hb')::bigint);
+  perform public.fn_asegurar_fondos_cajas(t.g('pro')::bigint);
+  perform t.ok(t.cuenta('select count(*) from public.cuentas_fondos') = v_antes
+               and t.cuenta('select count(*) from public.cuentas_contables') = v_total,
+               'el backfill es idempotente (segunda pasada sin fondos ni cuentas nuevas)');
+  perform t.ok(not has_function_privilege('authenticated', 'public.fn_asegurar_fondos_cajas(bigint)', 'execute')
+               and not has_function_privilege('anon', 'public.fn_asegurar_fondos_cajas(bigint)', 'execute'),
+               'el helper de fondos no se puede ejecutar desde el cliente');
+end $$;
+
+-- ─── medios_pago_fondo ───────────────────────────────────────────────────
+do $$
+declare v_t bigint := t.g('hp')::bigint;
+begin
+  insert into public.medios_pago_fondo (tenant_id, fk_modo_pago, fk_fondo)
+    values (v_t, t.g('m_tar')::bigint, t.g('hp_fbanco')::bigint);
+  perform t.ok(t.cuenta(format('select count(*) from public.medios_pago_fondo where tenant_id = %s', v_t)) = 1,
+               'Tarjeta queda mapeada al fondo del banco');
+  perform t.falla(format('insert into public.medios_pago_fondo (tenant_id, fk_modo_pago, fk_fondo) values (%s, %s, %s)',
+                         v_t, t.g('m_tar'), t.g('hp_fbanco')),
+                  '23505', 'un modo de pago se mapea a un solo fondo por hotel');
+  perform t.falla(format('insert into public.medios_pago_fondo (tenant_id, fk_modo_pago, fk_fondo) values (%s, %s, (select id from public.cuentas_fondos where tenant_id = %s limit 1))',
+                         v_t, t.g('m_tra'), t.g('hb')),
+                  '23503', 'no se mapea a un fondo de otro hotel');
+  perform t.falla(format('insert into public.medios_pago_fondo (tenant_id, fk_modo_pago, fk_fondo) values (%s, -1, %s)',
+                         v_t, t.g('hp_fbanco')),
+                  '23503', 'el modo de pago debe existir en el catalogo');
+end $$;
+
+-- ─── facturas: columns and constraints ───────────────────────────────────
+do $$
+declare v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+begin
+  perform t.ok(exists (select 1 from information_schema.columns
+                       where table_name = 'facturas' and column_name = 'fecha_vencimiento' and data_type = 'date')
+               and exists (select 1 from information_schema.columns
+                           where table_name = 'facturas' and column_name = 'saldo_pendiente' and is_nullable = 'NO'),
+               'facturas tiene fecha_vencimiento y saldo_pendiente');
+  perform t.ok((select is_nullable = 'YES' from information_schema.columns
+                where table_name = 'facturas' and column_name = 'fk_modo_pago'),
+               'fk_modo_pago admite null (ventas a credito)');
+  perform t.falla(format('select t.factura(%s, %s, %s, %s, %s, 3, 100, 0, 0, 9, 100)',
+                         v_t, v_estab, t.g('hp_cli'), t.g('hp_turno'), t.g('m_efe')),
+                  '23514', 'condicion_venta solo admite 1 (contado) y 2 (credito)');
+  perform t.falla(format('select t.factura(%s, %s, %s, %s, null, 1, 100, 0, 0, 9, 100)',
+                         v_t, v_estab, t.g('hp_cli'), t.g('hp_turno')),
+                  '23514', 'una venta de contado exige modo de pago');
+end $$;
+
+-- ─── Posting of cash invoices ────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_cta_caja bigint := t.cta_caja(t.g('hp')::bigint, t.g('hp_caja')::bigint);
+  v_cta_banco bigint;
+  v_f bigint; v_a record; v_debe numeric; v_haber numeric;
+begin
+  select fk_cuenta_contable into v_cta_banco from public.cuentas_fondos where id = t.g('hp_fbanco')::bigint;
+
+  -- Mix: 10% (IVA 10.000), 5% (IVA 1.000), exempt. Total 181.000.
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 110000, 21000, 50000, 11000, 181000);
+  perform t.ok(t.n_asientos(v_t, 'factura', v_f) = 1, 'una factura de contado genera un asiento');
+  select * into v_a from public.asientos where tenant_id = v_t and origen_tipo = 'factura' and fk_origen = v_f;
+  perform t.ok(v_a.estado = 'CONTABILIZADO' and v_a.fk_sucursal = v_estab and v_a.descripcion like 'Factura%',
+               'el asiento esta contabilizado, en el establecimiento de la factura y describe la factura');
+  perform t.ok(t.mov_cta(v_t, 'factura', v_f, v_cta_caja) = 181000, 'debita el fondo de la caja del turno por el total');
+  perform t.ok(t.mov(v_t, 'factura', v_f, 'VENTAS_10') = -100000, 'acredita ventas 10% sin IVA');
+  perform t.ok(t.mov(v_t, 'factura', v_f, 'VENTAS_5') = -20000, 'acredita ventas 5% sin IVA');
+  perform t.ok(t.mov(v_t, 'factura', v_f, 'VENTAS_EXENTAS') = -50000, 'acredita ventas exentas');
+  perform t.ok(t.mov(v_t, 'factura', v_f, 'IVA_DEBITO') = -11000, 'acredita el IVA debito');
+  perform t.ok(t.mov(v_t, 'factura', v_f, 'CXC_CLIENTES') = 0, 'una venta de contado no toca deudores por ventas');
+  select sum(d.debe), sum(d.haber) into v_debe, v_haber
+  from public.detalle_asientos d where d.tenant_id = v_t and d.fk_asientos = v_a.id;
+  perform t.ok(v_debe = 181000 and v_haber = 181000, 'el asiento balancea y el debe es el total general');
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_f) = 0,
+               'una venta de contado no deja saldo pendiente');
+
+  -- Mapped payment mode goes to its fund; an unmapped one falls back to the shift fund.
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_tar')::bigint, 1, 11000, 0, 0, 1000, 11000);
+  perform t.ok(t.mov_cta(v_t, 'factura', v_f, v_cta_banco) = 11000 and t.mov_cta(v_t, 'factura', v_f, v_cta_caja) = 0,
+               'Tarjeta mapeada debita el fondo del banco y no el de la caja');
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_tra')::bigint, 1, 11000, 0, 0, 1000, 11000);
+  perform t.ok(t.mov_cta(v_t, 'factura', v_f, v_cta_caja) = 11000 and t.mov_cta(v_t, 'factura', v_f, v_cta_banco) = 0,
+               'Transferencia sin mapear cae en el fondo de la caja del turno');
+
+  -- An inactive mapped fund is not used.
+  update public.cuentas_fondos set activo = false where id = t.g('hp_fbanco')::bigint;
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_tar')::bigint, 1, 11000, 0, 0, 1000, 11000);
+  perform t.ok(t.mov_cta(v_t, 'factura', v_f, v_cta_caja) = 11000,
+               'un fondo mapeado inactivo se ignora y se usa el de la caja');
+  update public.cuentas_fondos set activo = true where id = t.g('hp_fbanco')::bigint;
+
+  -- Zero lines are skipped.
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 0, 0, 30000, 0, 30000);
+  perform t.ok(t.n_lineas(v_t, 'factura', v_f) = 2 and t.mov(v_t, 'factura', v_f, 'IVA_DEBITO') = 0,
+               'una factura solo exenta genera dos lineas (sin lineas en cero)');
+  -- Per-line IVA rounding can leave the header IVA below round(5% / 21): the entry still balances.
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 0, 20, 0, 0, 20);
+  perform t.ok(t.mov(v_t, 'factura', v_f, 'VENTAS_5') = -20 and t.mov_cta(v_t, 'factura', v_f, v_cta_caja) = 20,
+               'el IVA del 5% se acota al IVA de la cabecera y el asiento balancea');
+  -- Header discount: sales absorb it so the debit is still total_general.
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 110000, 0, 0, 10000, 100000, 10000);
+  perform t.ok(t.mov_cta(v_t, 'factura', v_f, v_cta_caja) = 100000
+               and t.mov(v_t, 'factura', v_f, 'VENTAS_10') = -90000
+               and t.mov(v_t, 'factura', v_f, 'IVA_DEBITO') = -10000,
+               'con descuento_global el debe es total_general y las ventas absorben la diferencia');
+  perform t.falla_con(format('select t.factura(%s, %s, %s, %s, %s, 1, 100, 0, 0, 500, 100)',
+                             v_t, v_estab, t.g('hp_cli'), v_turno, t.g('m_efe')),
+                      '23514', 'consistentes', 'un IVA mayor que el monto gravado se rechaza con un mensaje claro');
+
+  -- The accounting date is the local day of the invoice, not the UTC one.
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 11000, 0, 0, 1000, 11000, 0, 'EMITIDA',
+                   timestamp '2026-03-15 23:30' at time zone 'America/Asuncion');
+  perform t.ok((select (fecha at time zone 'America/Asuncion')::date from public.asientos
+                where tenant_id = v_t and origen_tipo = 'factura' and fk_origen = v_f) = date '2026-03-15',
+               'el asiento lleva el dia local (America/Asuncion) de la factura');
+end $$;
+
+-- ─── Credit invoices ─────────────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_cta_caja bigint := t.cta_caja(t.g('hp')::bigint, t.g('hp_caja')::bigint);
+  v_f bigint;
+begin
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 110000, 21000, 50000, 11000, 181000);
+  perform t.ok(t.mov(v_t, 'factura', v_f, 'CXC_CLIENTES') = 181000 and t.mov_cta(v_t, 'factura', v_f, v_cta_caja) = 0,
+               'una venta a credito debita deudores por ventas y no un fondo');
+  perform t.ok(t.mov(v_t, 'factura', v_f, 'VENTAS_10') = -100000 and t.mov(v_t, 'factura', v_f, 'VENTAS_5') = -20000
+               and t.mov(v_t, 'factura', v_f, 'VENTAS_EXENTAS') = -50000 and t.mov(v_t, 'factura', v_f, 'IVA_DEBITO') = -11000,
+               'una venta a credito acredita las mismas cuentas de ventas e IVA');
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_f) = 181000,
+               'una venta a credito nace con saldo_pendiente igual al total');
+  update public.facturas set fecha_vencimiento = current_date + 30 where id_factura = v_f;
+  perform t.ok((select fecha_vencimiento from public.facturas where id_factura = v_f) = current_date + 30,
+               'la fecha de vencimiento es opcional y se puede fijar');
+
+  -- A client-supplied saldo is ignored at insert.
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 2, 11000, 0, 0, 1000, 11000);
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_f) = 11000,
+               'un credito con modo de pago tambien es valido');
+
+  -- Plan basico: contado posts, credito is refused (module not in the plan).
+  v_f := t.factura(t.g('hb')::bigint, t.g('hb_estab')::bigint, t.g('hb_cli')::bigint, t.g('hb_turno')::bigint,
+                   t.g('m_efe')::bigint, 1, 11000, 0, 0, 1000, 11000);
+  perform t.ok(t.n_asientos(t.g('hb')::bigint, 'factura', v_f) = 1
+               and t.mov_cta(t.g('hb')::bigint, 'factura', v_f, t.cta_caja(t.g('hb')::bigint, t.g('hb_caja')::bigint)) = 11000,
+               'el plan basico tambien contabiliza las ventas de contado');
+  perform t.falla_con(format('select t.factura(%s, %s, %s, %s, null, 2, 11000, 0, 0, 1000, 11000)',
+                             t.g('hb'), t.g('hb_estab'), t.g('hb_cli'), t.g('hb_turno')),
+                      '42501', 'contabilidad', 'el plan basico no puede vender a credito');
+end $$;
+
+-- ─── Annulment ───────────────────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_cta_caja bigint := t.cta_caja(t.g('hp')::bigint, t.g('hp_caja')::bigint);
+  v_f bigint; v_c bigint; v_h bigint; v_n bigint;
+begin
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 110000, 0, 0, 10000, 110000);
+  update public.facturas set estado = 'ANULADA', fk_motivo = t.g('motivo')::smallint where id_factura = v_f;
+  perform t.ok(t.n_asientos(v_t, 'factura_anulacion', v_f) = 1, 'anular la factura crea el asiento de reverso');
+  perform t.ok(not exists (select 1 from public.asientos where tenant_id = v_t and fk_origen = v_f
+                           and origen_tipo in ('factura', 'factura_anulacion') and estado <> 'ANULADO'),
+               'el asiento original y su reverso quedan ANULADO');
+  perform t.ok(t.mov_cta(v_t, 'factura', v_f, v_cta_caja) + t.mov_cta(v_t, 'factura_anulacion', v_f, v_cta_caja) = 0
+               and t.mov(v_t, 'factura', v_f, 'VENTAS_10') + t.mov(v_t, 'factura_anulacion', v_f, 'VENTAS_10') = 0
+               and t.mov(v_t, 'factura', v_f, 'IVA_DEBITO') + t.mov(v_t, 'factura_anulacion', v_f, 'IVA_DEBITO') = 0,
+               'el reverso deja las cuentas en cero');
+  update public.facturas set estado = 'ANULADA' where id_factura = v_f;
+  perform t.ok(t.n_asientos(v_t, 'factura_anulacion', v_f) = 1, 'una factura ya anulada no genera otro reverso');
+
+  -- Credit: the balance goes to zero and the receivable is reversed.
+  v_c := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 110000, 0, 0, 10000, 110000);
+  update public.facturas set estado = 'ANULADA', fk_motivo = t.g('motivo')::smallint where id_factura = v_c;
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_c) = 0,
+               'anular una venta a credito pone el saldo en cero');
+  perform t.ok(t.mov(v_t, 'factura', v_c, 'CXC_CLIENTES') + t.mov(v_t, 'factura_anulacion', v_c, 'CXC_CLIENTES') = 0
+               and t.n_asientos(v_t, 'factura_anulacion', v_c) = 1,
+               'anular una venta a credito revierte deudores por ventas');
+  -- T4 adds here: annulment is refused while the invoice has active cobros.
+
+  -- Invoices without an entry (before the module existed, or born annulled).
+  v_h := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 11000, 0, 0, 1000, 11000, 0, 'ANULADA');
+  perform t.ok(t.n_asientos(v_t, 'factura', v_h) = 0, 'una factura insertada ANULADA no se contabiliza');
+
+  set local session_replication_role = replica;
+  v_h := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 11000, 0, 0, 1000, 11000);
+  set local session_replication_role = origin;
+  perform t.ok(t.n_asientos(v_t, 'factura', v_h) = 0, 'la factura historica no tiene asiento (preparacion)');
+  update public.facturas set estado = 'ANULADA', fk_motivo = t.g('motivo')::smallint where id_factura = v_h;
+  perform t.ok((select estado from public.facturas where id_factura = v_h) = 'ANULADA'
+               and t.n_asientos(v_t, 'factura_anulacion', v_h) = 0,
+               'anular una factura historica (sin asiento) funciona y no crea reverso');
+
+  -- A hotel with an empty chart issues invoices normally; nothing is posted.
+  v_h := t.factura(t.g('hs')::bigint, t.g('hs_estab')::bigint, t.g('hs_cli')::bigint, t.g('hs_turno')::bigint,
+                   t.g('m_efe')::bigint, 1, 11000, 0, 0, 1000, 11000);
+  perform t.ok(t.n_asientos(t.g('hs')::bigint, 'factura', v_h) = 0,
+               'un hotel sin plan de cuentas factura sin contabilizar');
+  update public.facturas set estado = 'ANULADA' where id_factura = v_h;
+  perform t.ok((select estado from public.facturas where id_factura = v_h) = 'ANULADA',
+               'y puede anular esa factura');
+
+  -- The shift's caja without a fund: a clear Spanish error, nothing is posted.
+  declare
+    v_caja2 bigint := t.g('hp_caja2')::bigint; v_us bigint; v_turno2 bigint;
+  begin
+    select id_usuario into v_us from public.usuario where tenant_id = v_t and auth_id = t.g('hp_admin')::uuid;
+    insert into public.apertura_cierre_caja (tenant_id, monto_inicial, monto_final, fk_usuario, fk_caja)
+      values (v_t, 0, 0, v_us, v_caja2) returning id_turno into v_turno2;
+    delete from public.cuentas_fondos where tenant_id = v_t and fk_caja = v_caja2;
+    select count(*) into v_n from public.facturas where tenant_id = v_t;
+    perform t.falla_con(format('select t.factura(%s, %s, %s, %s, %s, 1, 11000, 0, 0, 1000, 11000)',
+                               v_t, v_estab, v_cli, v_turno2, t.g('m_efe')),
+                        'P0002', 'fondo', 'sin fondo para la caja del turno la factura falla con un mensaje claro');
+    perform t.ok((select count(*) from public.facturas where tenant_id = v_t) = v_n,
+                 'la factura sin fondo no queda guardada');
+  end;
+end $$;
+
+-- ─── Posting through the app path (receptionist, RLS) ────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_f bigint; v_c bigint;
+begin
+  perform t.actuar(t.g('hp_rec'), v_t);
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 110000, 0, 0, 10000, 110000);
+  v_c := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 55000, 0, 0, 5000, 55000);
+  perform t.ok(t.cuenta('select count(*) from public.asientos') = 0
+               and t.cuenta('select count(*) from public.cuentas_fondos') = 0
+               and t.cuenta('select count(*) from public.medios_pago_fondo') = 0,
+               'la recepcionista no ve asientos, fondos ni medios de pago');
+  perform t.filas(format('update public.facturas set estado = ''ANULADA'', fk_motivo = %s where id_factura = %s', t.g('motivo'), v_f),
+                  1, 'la recepcionista anula una factura');
+  perform t.volver();
+
+  perform t.ok(t.n_asientos(v_t, 'factura', v_f) = 1 and t.n_asientos(v_t, 'factura_anulacion', v_f) = 1,
+               'la factura de la recepcionista se contabilizo y se revirtio al anularla');
+  perform t.ok(t.mov(v_t, 'factura', v_c, 'CXC_CLIENTES') = 55000
+               and (select saldo_pendiente from public.facturas where id_factura = v_c) = 55000,
+               'la recepcionista emite ventas a credito (plan pro) y se contabilizan');
+end $$;
+
+-- ─── RLS of the new tables ───────────────────────────────────────────────
+do $$
+declare v_t bigint := t.g('hp')::bigint; v_cj bigint;
+begin
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform t.ok(t.cuenta('select count(*) from public.cuentas_fondos') >= 3, 'el admin lee los fondos de su hotel');
+  perform t.filas('insert into public.cuentas_fondos (nombre, tipo) values (''Caja chica'', ''caja_chica'')', 1,
+                  'el admin crea un fondo (la cuenta contable se crea sola)');
+  perform t.ok(exists (select 1 from public.cuentas_contables where nombre = 'Caja chica' and imputable),
+               'el fondo creado por el admin tiene su cuenta');
+  select id into v_cj from public.cuentas_fondos where nombre = 'Caja chica';
+  perform t.filas(format('insert into public.medios_pago_fondo (fk_modo_pago, fk_fondo) values (%s, %s)', t.g('m_tra'), v_cj),
+                  1, 'el admin mapea un modo de pago a un fondo');
+  perform t.filas('update public.cuentas_fondos set activo = false where nombre = ''Caja chica''', 1, 'el admin edita un fondo');
+  perform t.ok(t.cuenta('select count(*) from public.medios_pago_fondo') = 2, 'el admin lee los medios de pago');
+  perform t.filas('delete from public.medios_pago_fondo where fk_modo_pago = ' || t.g('m_tra'), 1, 'el admin borra un mapeo');
+  perform t.filas('delete from public.cuentas_fondos where nombre = ''Caja chica''', 1, 'el admin borra un fondo sin uso');
+  perform t.volver();
+
+  perform t.actuar(t.g('hp_ger'), v_t);
+  perform t.ok(t.cuenta('select count(*) from public.cuentas_fondos') >= 3, 'el gerente lee los fondos');
+  perform t.filas('insert into public.cuentas_fondos (nombre, tipo) values (''Banco Gerencia'', ''banco'')', 1,
+                  'el gerente crea un fondo');
+  perform t.volver();
+
+  perform t.actuar(t.g('hp_rec'), v_t);
+  perform t.falla('insert into public.cuentas_fondos (nombre, tipo) values (''Rec'', ''banco'')',
+                  '42501', 'la recepcionista no crea fondos');
+  perform t.falla(format('insert into public.medios_pago_fondo (fk_modo_pago, fk_fondo) values (%s, %s)', t.g('m_tra'), t.g('hp_fbanco')),
+                  '42501', 'la recepcionista no crea mapeos de pago');
+  perform t.volver();
+
+  perform t.actuar(t.g('hb_admin'), t.g('hb')::bigint);
+  perform t.ok(t.cuenta('select count(*) from public.cuentas_fondos') = 1, 'el admin del plan basico lee su fondo');
+  perform t.falla('insert into public.cuentas_fondos (nombre, tipo) values (''Banco'', ''banco'')',
+                  '42501', 'el plan basico no escribe fondos (modulo contabilidad)');
+  perform t.falla(format('insert into public.medios_pago_fondo (fk_modo_pago, fk_fondo) values (%s, (select id from public.cuentas_fondos limit 1))', t.g('m_tra')),
+                  '42501', 'el plan basico no escribe medios de pago');
+  perform t.filas('update public.cuentas_fondos set activo = false', 0, 'el plan basico no edita fondos');
+  perform t.volver();
+
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_fondos where tenant_id = %s', t.g('hb'))) = 0
+               and t.cuenta(format('select count(*) from public.medios_pago_fondo where tenant_id = %s', t.g('hb'))) = 0,
+               'el admin no ve fondos ni medios de pago de otro hotel');
+  perform t.volver();
+  perform t.anonimo();
+  perform t.falla('select count(*) from public.cuentas_fondos', '42501', 'anon no lee fondos');
+  perform t.falla('select count(*) from public.medios_pago_fondo', '42501', 'anon no lee medios de pago');
   perform t.volver();
 end $$;
 
