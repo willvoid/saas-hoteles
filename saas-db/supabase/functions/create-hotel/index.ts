@@ -22,7 +22,7 @@ import {
 async function handle(req: Request): Promise<Response> {
   const call = await authenticate(req);
   if (call instanceof Response) return call;
-  const { userId, admin } = call;
+  const { userId, admin, callerClient } = call;
 
   let body: unknown;
   try {
@@ -56,8 +56,19 @@ async function handle(req: Request): Promise<Response> {
     }
     cargoNames = new Map((cargos.data ?? []).map((c) => [Number(c.id_cargo), String(c.cargo)]));
   }
+
+  // Hotel limit of the account's plans. Called with the caller's JWT client:
+  // fn_max_hoteles_cuenta() resolves the account through auth.uid(). Null means
+  // unlimited; an error fails closed rather than skipping the limit.
+  const limit = await callerClient.rpc('fn_max_hoteles_cuenta');
+  if (limit.error) {
+    console.error('create-hotel: hotel limit lookup failed', limit.error.code);
+    return fail(500, 'No se pudo verificar tu plan.');
+  }
+
   const eligibility = checkHotelEligibility(
     (profiles.data ?? []).map((p) => cargoNames.get(Number(p.fk_cargo)) ?? ''),
+    limit.data === null ? null : Number(limit.data),
   );
   if (!eligibility.ok) return fail(eligibility.status, eligibility.error);
 

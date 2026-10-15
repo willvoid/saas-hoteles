@@ -9,8 +9,6 @@ import {
   telefonoError,
 } from '../_shared/rules.ts';
 
-export const MAX_HOTELS_PER_ACCOUNT = 5;
-
 // Mirrors the list in fn_provision_tenant (0008); the DB stays authoritative.
 export const RESERVED_SLUGS: readonly string[] = [
   'plantilla-base', 'admin', 'api', 'www', 'app', 'auth', 'soporte',
@@ -180,16 +178,23 @@ export type Eligibility = { ok: true } | { ok: false; status: number; error: str
 // One entry per active profile of the caller. Only admins of every hotel they
 // belong to can open another one, so a staff account created by a hotel's admin
 // cannot spawn trial hotels. An account with no hotel can open its first one.
-export function checkHotelEligibility(cargos: readonly string[]): Eligibility {
+//
+// `maxHoteles` comes from fn_max_hoteles_cuenta() (migration 0014): the highest
+// hotel limit among the plans of the hotels the account administers. null means
+// unlimited. The trigger-level checks in the DB stay authoritative.
+export function checkHotelEligibility(
+  cargos: readonly string[],
+  maxHoteles: number | null,
+): Eligibility {
   const normalized = cargos.map((c) => c.trim().toLowerCase());
   if (normalized.some((c) => !ADMIN_CARGOS.includes(c))) {
     return { ok: false, status: 403, error: 'Solo un administrador puede crear hoteles.' };
   }
-  if (normalized.length >= MAX_HOTELS_PER_ACCOUNT) {
+  if (maxHoteles !== null && normalized.length >= maxHoteles) {
     return {
       ok: false,
       status: 403,
-      error: `Alcanzaste el máximo de ${MAX_HOTELS_PER_ACCOUNT} hoteles por cuenta.`,
+      error: `Tu plan permite un máximo de ${maxHoteles} ${maxHoteles === 1 ? 'hotel' : 'hoteles'} por cuenta. Mejorá tu plan para crear más.`,
     };
   }
   return { ok: true };

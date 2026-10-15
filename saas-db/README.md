@@ -215,8 +215,8 @@ Despues de `switch-hotel` o `create-hotel` el cliente llama a
 
 **Reglas de `create-hotel`:** solo puede crear hoteles una cuenta que sea
 administradora en todos los suyos (o que aun no tenga ninguno), asi el personal
-creado por un hotel no abre hoteles de prueba; maximo 5 hoteles por cuenta
-(`MAX_HOTELS_PER_ACCOUNT`); el RUC es unico entre todos los hoteles y el
+creado por un hotel no abre hoteles de prueba; el maximo de hoteles por
+cuenta lo fija el plan (`fn_max_hoteles_cuenta()`); el RUC es unico entre todos los hoteles y el
 identificador (slug) no puede estar reservado ni en uso.
 
 **Despliegue:** `supabase db push` para 0013 y, desde `saas-db/`:
@@ -267,8 +267,8 @@ La suscripcion es **por hotel** (`tenants`). Catalogo en `planes` (legible por
   `datos_factura_sifen`, `mod_sifen`.
 - **Hoteles por cuenta:** `fn_max_hoteles_cuenta()` (usa `auth.uid()`, hay que
   llamarla con el JWT del usuario) da el mayor tope entre los hoteles que la cuenta
-  administra; `null` es ilimitado. `create-hotel` debera consumirla en lugar de
-  `MAX_HOTELS_PER_ACCOUNT`.
+  administra; `null` es ilimitado. `create-hotel` la consume con el cliente que lleva el
+  JWT del usuario.
 - **Cobro manual:** el operador (service_role o rol postgres) ejecuta
   `select fn_activar_plan(<tenant>, 'pro', 'mensual', null, '<referencia>')`. Deja el
   hotel `activo`, extiende `vigente_hasta` 1 o 12 meses desde lo que quede de

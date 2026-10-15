@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_HOTELS_PER_ACCOUNT,
   buildProvisionPayload,
   checkHotelEligibility,
   mapProvisionError,
@@ -129,17 +128,17 @@ describe('buildProvisionPayload', () => {
 
 describe('checkHotelEligibility', () => {
   it('lets an account with no hotel open its first one', () => {
-    expect(checkHotelEligibility([])).toEqual({ ok: true });
+    expect(checkHotelEligibility([], 1)).toEqual({ ok: true });
   });
 
   it('lets an administrator of every hotel open another', () => {
-    expect(checkHotelEligibility(['admin', ' Administrador '])).toEqual({ ok: true });
+    expect(checkHotelEligibility(['admin', ' Administrador '], 5)).toEqual({ ok: true });
   });
 
   it.each([['gerente'], ['recepcionista'], ['admin', 'limpiador'], ['']])(
     'denies non-admin profiles (%s)',
     (...cargos) => {
-      expect(checkHotelEligibility(cargos.flat())).toEqual({
+      expect(checkHotelEligibility(cargos.flat(), 5)).toEqual({
         ok: false,
         status: 403,
         error: 'Solo un administrador puede crear hoteles.',
@@ -147,10 +146,23 @@ describe('checkHotelEligibility', () => {
     },
   );
 
-  it('denies an account that reached the hotel limit', () => {
-    const full = Array.from({ length: MAX_HOTELS_PER_ACCOUNT }, () => 'admin');
-    expect(checkHotelEligibility(full)).toMatchObject({ ok: false, status: 403, error: /máximo/ });
-    expect(checkHotelEligibility(full.slice(1))).toEqual({ ok: true });
+  it('denies an account that reached the limit of its plan', () => {
+    const full = Array.from({ length: 5 }, () => 'admin');
+    expect(checkHotelEligibility(full, 5)).toMatchObject({ ok: false, status: 403, error: /máximo de 5/ });
+    expect(checkHotelEligibility(full.slice(1), 5)).toEqual({ ok: true });
+  });
+
+  it('denies a second hotel on a one-hotel plan and suggests upgrading', () => {
+    expect(checkHotelEligibility(['admin'], 1)).toMatchObject({
+      ok: false,
+      status: 403,
+      error: /plan/,
+    });
+  });
+
+  it('has no ceiling when the plan allows unlimited hotels', () => {
+    const many = Array.from({ length: 50 }, () => 'admin');
+    expect(checkHotelEligibility(many, null)).toEqual({ ok: true });
   });
 });
 

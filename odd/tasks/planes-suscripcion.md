@@ -20,7 +20,7 @@ Model subscription plans (Basico / Pro / Business) with prices and limits, enfor
 
 ## Tasks
 - [x] T1 DB: migration `0014_planes_suscripcion.sql` (planes, tenants columns, pagos_suscripcion, functions, triggers, restrictive policies, provisioning), SQL tests, README. Route: delegated writer (3+ non-trivial files, read-to-write).
-- [ ] T2 Edge function: `create-hotel` uses plan-based hotel limit instead of `MAX_HOTELS_PER_ACCOUNT`; tests updated. Route: delegated writer.
+- [x] T2 Edge function: `create-hotel` uses plan-based hotel limit instead of `MAX_HOTELS_PER_ACCOUNT`; tests updated. Route: inline (small, already-understood edits; RED observed 2 failing, GREEN 107/107 vitest).
 
 Out of scope: upgrade UI, `fn_mis_hoteles` plan columns, payment gateway.
 
