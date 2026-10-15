@@ -24,7 +24,7 @@ Public landing at `/` with plans and prices, plus a public sign-up that creates 
 
 ## Tasks
 - [x] T1 DB: migration `0015_registro_publico.sql`: `fn_planes_publicos()`, `fn_catalogos_registro()`, `fn_ubicaciones_registro(nivel, padre)`, `fn_registro_rate_limit()` (service_role only) + table `registro_intentos`; SQL tests. Route: delegated writer (read-to-write, 2 non-trivial files). Verified on throwaway PG17: registro_publico 35 ok, planes 24 ok, aislamiento 122 ok. Not run: real Supabase/PostgREST, concurrency.
-- [ ] T2 Edge function `register-tenant` (+ extract shared validation from `create-hotel` into `_shared/`), Deno tests.
+- [x] T2 Edge function `register-tenant` (+ shared validation extracted to `_shared/hotelInput.ts`). Route: delegated writer. RED observed (module missing), GREEN: `npm test` 384/384 (re-run by parent). Not verified: `deno check` (deno not installed), live Turnstile, real email send via `auth.resend`, `email_exists` code, interval string via PostgREST, provisioning with unconfirmed user. Deploy with `--no-verify-jwt` (no config.toml in repo).
 - [ ] T3 Frontend foundations: `utils/plans.ts` (+ vitest), `services/planService.ts`, `services/registrationService.ts`, catalog service.
 - [ ] T4 Frontend landing: `pages/Home.tsx`, `components/landing/*`, CSS, route `/`.
 - [ ] T5 Frontend sign-up wizard: `pages/Register.tsx`, `hooks/useRegisterWizard.ts`, Turnstile widget, route `/registro`.
