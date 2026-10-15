@@ -3,7 +3,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Runs in one transaction that is rolled back at the end: it leaves nothing behind.
 --
--- Requirements: migrations 0001-0017 (or whatever the sections cover) and
+-- Requirements: migrations 0001-0021 (or whatever the sections cover) and
 -- supabase/seed.sql applied.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/finanzas.sql
@@ -16,10 +16,10 @@
 --   3. One section per migration, each in its own `do $$` block:
 --        T1 (0016) accounting base  <- this one
 --        T2 (0017) chart of accounts and categories
---        T3 (0018) funds and credit invoices             (pending)
---        T4 (0019) expenses, collections, payments, transfers (pending)
+--        T3 (0018) funds and credit invoices
+--        T4 (0019) expenses, collections, payments, transfers
 --        T5 (0020) month lock
---        T6 (0021) reports                               (pending)
+--        T6 (0021) report RPCs (own hotel `hr`, hand-computed scenario)
 --      Each task inserts its section right BEFORE the `FIN` marker at the end.
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -2786,6 +2786,654 @@ begin
            jsonb_build_array(jsonb_build_object('fk_cuenta', (select fk_cuenta_contable from public.cuentas_fondos where id = t.g('c_f1')::bigint), 'debe', 100),
                              jsonb_build_object('fk_cuenta', (select fk_cuenta_contable from public.cuentas_fondos where id = t.g('c_f2')::bigint), 'haber', 100)));
   perform t.ok(v_a is not null, 'reabierto marzo: se contabilizan asientos manuales');
+end $$;
+
+-- ═══ T6 · 0021 report RPCs ═══════════════════════════════════════════════════
+-- One realistic scenario in a fresh hotel `hr` (plan pro), every number computed
+-- by hand. Dates are fixed in 2026-02..2026-06; reports use explicit ranges and
+-- cutoffs. Documents and their annulments (dated today) exercise the
+-- "annulled documents never show up" rule.
+--
+-- Funds: Caja principal (shift cash), Banco R (card payments are mapped to it),
+-- Chica R (idle, active), Zeta inactivo (idle, inactive: must not be listed).
+--
+-- Opening balances (2026-02-20): Caja 1.000.000, Banco 5.000.000. Transfer
+-- caja -> banco 100.000 on 2026-02-25. Balances before March: Caja 900.000,
+-- Banco 5.100.000.
+--
+-- Sales (amounts include VAT; IVA split 10/5 as in T3):
+--   F1 03-05 cash efectivo   g10 110.000 g5 21.000 ex 50.000, IVA 11.000, total 181.000
+--   F2 03-12 cash tarjeta    g10 55.000, IVA 5.000
+--   F3 03-15 credit          g10 220.000, IVA 20.000, due 04-14, collected 70.000 (03-20, banco)
+--   F4 03-02 credit          g5 105.000, IVA 5.000, due 03-12, one cobro of 5.000 annulled
+--   F5 04-20 credit          g10 110.000, IVA 10.000, due 06-15, collected 10.000 (05-02, caja)
+--   F7 04-01 credit          g10 33.000, IVA 3.000, due 05-10
+--   F6 06-20 credit          exempt 30.000, due 07-20
+--   F9 06-10 credit          g10 11.000, IVA 1.000, no due date (due on issue)
+--   F10 03-18 cash 11.000 and F11 04-05 credit 22.000: both annulled
+-- Expenses (c1 / c2 are two different expense categories):
+--   G1 03-08 cash caja       g10 110.000 g5 21.000 ex 50.000 (IVA 11.000), c1
+--   G2 03-25 credit Uno      g10 55.000, due 04-24, c2, paid 20.000 (04-02, banco)
+--   G4 03-01 credit Uno      g5 42.000 (IVA 2.000), no due date, c2
+--   G7 04-15 cash banco      g10 22.000 (IVA 2.000), c1
+--   G8 04-20 credit Dos      g10 33.000 (IVA 3.000), due 05-30, c2, a 10.000 pago annulled
+--   G3 05-15 credit Dos      exempt 80.000, due 06-30, c1
+--   G9 06-01 credit Uno      exempt 10.000, due 06-20, c1
+--   G5 04-10 cash 11.000 and G6 05-02 credit 22.000: both annulled
+-- Transfer caja -> banco 300.000 on 04-10.
+
+create function t.mediodia(p date) returns timestamptz language sql as $$
+  select (p + time '12:00') at time zone 'America/Asuncion'
+$$;
+
+-- Fingerprint of every report as the current user: used to prove that reads
+-- survive a downgrade unchanged.
+create function t.huella() returns text language sql as $$
+  select md5(
+    coalesce((select string_agg(r::text, '|' order by r::text)
+              from public.fn_rep_resultado(date '2026-01-01', date '2026-12-31') r), '') || '#' ||
+    coalesce((select string_agg(r::text, '|' order by r::text)
+              from public.fn_rep_cxc(date '2026-06-30') r), '') || '#' ||
+    coalesce((select string_agg(r::text, '|' order by r::text)
+              from public.fn_rep_cxp(date '2026-06-30') r), '') || '#' ||
+    coalesce((select string_agg(r::text, '|' order by r::text)
+              from public.fn_rep_flujo_fondos(date '2026-03-01', date '2026-04-30') r), '') || '#' ||
+    coalesce((select string_agg(r::text, '|' order by r::text)
+              from public.fn_rep_movimientos_fondo(t.g('r_fb')::bigint, date '2026-01-01', date '2026-12-31') r), '') || '#' ||
+    coalesce((select string_agg(r::text, '|' order by r::text)
+              from public.fn_rep_libro_iva(2026) r), ''))
+$$;
+
+-- Fixture: hotel hr with admin, gerente, receptionist and cleaner.
+do $$
+declare
+  v_contrib bigint := (select min(id_tipo_contribuyente) from public.tipo_contribuyente);
+  v_regimen bigint := (select min(id_regimen) from public.tipo_regimen);
+  c_ger bigint := (select id_cargo from public.cargo where lower(cargo) = 'gerente' limit 1);
+  c_rec bigint := (select id_cargo from public.cargo where lower(cargo) = 'recepcionista' limit 1);
+  c_lim bigint := (select id_cargo from public.cargo where lower(cargo) in ('limpiador', 'limpiadora') limit 1);
+  v_u uuid := gen_random_uuid(); v_ger uuid := gen_random_uuid();
+  v_rec uuid := gen_random_uuid(); v_lim uuid := gen_random_uuid();
+  v_res jsonb; v_t bigint; v_estab bigint; v_caja bigint; v_us bigint; v_cli bigint; v_turno bigint;
+begin
+  insert into auth.users (id, email) values (v_u, 'fin6-hr@f.test');
+  v_res := public.fn_provision_tenant(jsonb_build_object(
+    'tenant', jsonb_build_object('nombre', 'Hotel fin6 hr', 'slug', 'fin6-hr'),
+    'admin', jsonb_build_object('auth_id', v_u, 'nombre', 'Admin', 'documento', 'H1', 'fk_tipo_doc', 1),
+    'empresa', jsonb_build_object('ruc', '84000001-1', 'razon_social', 'Hotel H',
+                                  'fk_contribuyente', v_contrib, 'fk_regimen', v_regimen),
+    'establecimiento', jsonb_build_object('direccion', 'Calle', 'fk_barrio', 1)));
+  v_t := (v_res ->> 'tenant_id')::bigint;
+  v_estab := (v_res ->> 'id_establecimiento')::bigint;
+  v_caja := (v_res ->> 'id_caja')::bigint;
+  perform public.fn_activar_plan(v_t, 'pro', 'mensual', null, 'test-fin6-hr');
+
+  insert into auth.users (id, email, raw_app_meta_data, raw_user_meta_data) values
+    (v_ger, 'fin6-ger@f.test', jsonb_build_object('tenant_id', v_t, 'fk_cargo', c_ger),
+       jsonb_build_object('nombre', 'Gerente', 'documento', 'H11', 'fk_tipo_doc', 1)),
+    (v_rec, 'fin6-rec@f.test', jsonb_build_object('tenant_id', v_t, 'fk_cargo', c_rec),
+       jsonb_build_object('nombre', 'Recepcion', 'documento', 'H12', 'fk_tipo_doc', 1)),
+    (v_lim, 'fin6-lim@f.test', jsonb_build_object('tenant_id', v_t, 'fk_cargo', c_lim),
+       jsonb_build_object('nombre', 'Limpieza', 'documento', 'H13', 'fk_tipo_doc', 1));
+
+  select id_usuario into v_us from public.usuario where tenant_id = v_t and auth_id = v_u;
+  insert into public.clientes (tenant_id, razon_social, documento, celular, es_proveedor_del_estado)
+    values (v_t, 'Cliente hr', '1234567', '0981000000', false) returning id_cliente into v_cli;
+  insert into public.apertura_cierre_caja (tenant_id, monto_inicial, monto_final, fk_usuario, fk_caja)
+    values (v_t, 0, 0, v_us, v_caja) returning id_turno into v_turno;
+
+  perform set_config('test.hr', v_t::text, true);
+  perform set_config('test.hr_admin', v_u::text, true);
+  perform set_config('test.hr_ger', v_ger::text, true);
+  perform set_config('test.hr_rec', v_rec::text, true);
+  perform set_config('test.hr_lim', v_lim::text, true);
+  perform set_config('test.hr_estab', v_estab::text, true);
+  perform set_config('test.hr_caja', v_caja::text, true);
+  perform set_config('test.hr_cli', v_cli::text, true);
+  perform set_config('test.hr_turno', v_turno::text, true);
+end $$;
+
+-- Scenario data (superuser, documents posted by the 0018/0019 triggers).
+do $$
+declare
+  v_t bigint := t.g('hr')::bigint; v_estab bigint := t.g('hr_estab')::bigint;
+  v_cli bigint := t.g('hr_cli')::bigint; v_turno bigint := t.g('hr_turno')::bigint;
+  v_efe bigint := t.g('m_efe')::bigint; v_tar bigint := t.g('m_tar')::bigint;
+  v_fc bigint; v_fb bigint; v_fk bigint; v_fi bigint;
+  v_c1 bigint; v_c2 bigint; v_p1 bigint; v_p2 bigint;
+  v_f1 bigint; v_f2 bigint; v_f3 bigint; v_f4 bigint; v_f5 bigint; v_f6 bigint; v_f7 bigint;
+  v_f9 bigint; v_f10 bigint; v_f11 bigint;
+  v_g1 bigint; v_g2 bigint; v_g3 bigint; v_g4 bigint; v_g5 bigint; v_g6 bigint;
+  v_g7 bigint; v_g8 bigint; v_g9 bigint;
+  v_cb3 bigint; v_pg2 bigint;
+begin
+  select id into v_fc from public.cuentas_fondos where tenant_id = v_t and fk_caja = t.g('hr_caja')::bigint;
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Banco R', 'banco') returning id into v_fb;
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Chica R', 'caja_chica') returning id into v_fk;
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo, activo) values (v_t, 'Zeta inactivo', 'banco', false) returning id into v_fi;
+  insert into public.medios_pago_fondo (tenant_id, fk_modo_pago, fk_fondo) values (v_t, v_tar, v_fb);
+
+  -- Categories: two different expense ones and the three sales ones.
+  select id into v_c1 from public.categorias_finanzas where tenant_id = v_t and tipo = 'egreso' and activo order by id limit 1;
+  select id into v_c2 from public.categorias_finanzas where tenant_id = v_t and tipo = 'egreso' and activo order by id offset 1 limit 1;
+  perform set_config('test.r_c1', v_c1::text, true);
+  perform set_config('test.r_c2', v_c2::text, true);
+  perform set_config('test.r_cv10', (select k.id::text from public.categorias_finanzas k join public.cuentas_contables c
+    on c.tenant_id = k.tenant_id and c.id = k.fk_cuenta_contable where k.tenant_id = v_t and c.clave = 'VENTAS_10'), true);
+  perform set_config('test.r_cv5', (select k.id::text from public.categorias_finanzas k join public.cuentas_contables c
+    on c.tenant_id = k.tenant_id and c.id = k.fk_cuenta_contable where k.tenant_id = v_t and c.clave = 'VENTAS_5'), true);
+  perform set_config('test.r_cvex', (select k.id::text from public.categorias_finanzas k join public.cuentas_contables c
+    on c.tenant_id = k.tenant_id and c.id = k.fk_cuenta_contable where k.tenant_id = v_t and c.clave = 'VENTAS_EXENTAS'), true);
+
+  insert into public.proveedores (tenant_id, nombre, ruc) values (v_t, 'Proveedor Uno R', '80066666-1') returning id into v_p1;
+  insert into public.proveedores (tenant_id, nombre) values (v_t, 'Proveedor Dos R') returning id into v_p2;
+
+  -- Opening balances and the February transfer.
+  insert into public.saldos_iniciales_fondos (tenant_id, fecha, fk_cuenta_fondo, monto) values
+    (v_t, date '2026-02-20', v_fc, 1000000), (v_t, date '2026-02-20', v_fb, 5000000);
+  insert into public.transferencias_fondos (tenant_id, fecha, fk_fondo_origen, fk_fondo_destino, monto) values
+    (v_t, date '2026-02-25', v_fc, v_fb, 100000), (v_t, date '2026-04-10', v_fc, v_fb, 300000);
+
+  -- Sales.
+  v_f1 := t.factura(v_t, v_estab, v_cli, v_turno, v_efe, 1, 110000, 21000, 50000, 11000, 181000, 0, 'EMITIDA', t.mediodia(date '2026-03-05'));
+  v_f2 := t.factura(v_t, v_estab, v_cli, v_turno, v_tar, 1, 55000, 0, 0, 5000, 55000, 0, 'EMITIDA', t.mediodia(date '2026-03-12'));
+  v_f3 := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 220000, 0, 0, 20000, 220000, 0, 'EMITIDA', t.mediodia(date '2026-03-15'));
+  v_f4 := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 0, 105000, 0, 5000, 105000, 0, 'EMITIDA', t.mediodia(date '2026-03-02'));
+  v_f5 := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 110000, 0, 0, 10000, 110000, 0, 'EMITIDA', t.mediodia(date '2026-04-20'));
+  v_f7 := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 33000, 0, 0, 3000, 33000, 0, 'EMITIDA', t.mediodia(date '2026-04-01'));
+  v_f6 := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 0, 0, 30000, 0, 30000, 0, 'EMITIDA', t.mediodia(date '2026-06-20'));
+  v_f9 := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 11000, 0, 0, 1000, 11000, 0, 'EMITIDA', t.mediodia(date '2026-06-10'));
+  v_f10 := t.factura(v_t, v_estab, v_cli, v_turno, v_efe, 1, 11000, 0, 0, 1000, 11000, 0, 'EMITIDA', t.mediodia(date '2026-03-18'));
+  v_f11 := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 22000, 0, 0, 2000, 22000, 0, 'EMITIDA', t.mediodia(date '2026-04-05'));
+  update public.facturas set fecha_vencimiento = date '2026-04-14' where id_factura = v_f3;
+  update public.facturas set fecha_vencimiento = date '2026-03-12' where id_factura = v_f4;
+  update public.facturas set fecha_vencimiento = date '2026-06-15' where id_factura = v_f5;
+  update public.facturas set fecha_vencimiento = date '2026-05-10' where id_factura = v_f7;
+  update public.facturas set fecha_vencimiento = date '2026-07-20' where id_factura = v_f6;
+  update public.facturas set estado = 'ANULADA', fk_motivo = t.g('motivo')::smallint where id_factura in (v_f10, v_f11);
+
+  insert into public.cobros (tenant_id, fecha, fk_factura, fk_cuenta_fondo, monto) values
+    (v_t, date '2026-03-20', v_f3, v_fb, 70000),
+    (v_t, date '2026-05-02', v_f5, v_fc, 10000);
+  insert into public.cobros (tenant_id, fecha, fk_factura, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-03-25', v_f4, v_fc, 5000) returning id into v_cb3;
+  update public.cobros set estado = 'ANULADO' where id = v_cb3;
+
+  -- Expenses.
+  v_g1 := t.gasto(v_t, 'contado', 110000, 21000, 50000, null, v_fc, v_c1, date '2026-03-08', 'G-001');
+  v_g2 := t.gasto(v_t, 'credito', 55000, 0, 0, v_p1, null, v_c2, date '2026-03-25', 'C-002');
+  v_g4 := t.gasto(v_t, 'credito', 0, 42000, 0, v_p1, null, v_c2, date '2026-03-01', 'C-004');
+  v_g5 := t.gasto(v_t, 'contado', 11000, 0, 0, null, v_fb, v_c1, date '2026-04-10', 'G-005');
+  v_g6 := t.gasto(v_t, 'credito', 22000, 0, 0, v_p1, null, v_c1, date '2026-05-02', 'C-006');
+  v_g7 := t.gasto(v_t, 'contado', 22000, 0, 0, null, v_fb, v_c1, date '2026-04-15', 'G-007');
+  v_g8 := t.gasto(v_t, 'credito', 33000, 0, 0, v_p2, null, v_c2, date '2026-04-20', 'C-008');
+  v_g3 := t.gasto(v_t, 'credito', 0, 0, 80000, v_p2, null, v_c1, date '2026-05-15', 'C-003');
+  v_g9 := t.gasto(v_t, 'credito', 0, 0, 10000, v_p1, null, v_c1, date '2026-06-01', null);
+  update public.gastos set fecha_vencimiento = date '2026-04-24' where id = v_g2;
+  update public.gastos set fecha_vencimiento = date '2026-05-30' where id = v_g8;
+  update public.gastos set fecha_vencimiento = date '2026-06-30' where id = v_g3;
+  update public.gastos set fecha_vencimiento = date '2026-06-20' where id = v_g9;
+  update public.gastos set estado = 'ANULADO' where id in (v_g5, v_g6);
+
+  insert into public.pagos (tenant_id, fecha, fk_gasto, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-04-02', v_g2, v_fb, 20000);
+  insert into public.pagos (tenant_id, fecha, fk_gasto, fk_cuenta_fondo, monto)
+    values (v_t, date '2026-05-20', v_g8, v_fc, 10000) returning id into v_pg2;
+  update public.pagos set estado = 'ANULADO' where id = v_pg2;
+
+  perform set_config('test.r_fc', v_fc::text, true);
+  perform set_config('test.r_fb', v_fb::text, true);
+  perform set_config('test.r_fk', v_fk::text, true);
+  perform set_config('test.r_fi', v_fi::text, true);
+  perform set_config('test.r_f3', v_f3::text, true);
+  perform set_config('test.r_f4', v_f4::text, true);
+  perform set_config('test.r_f5', v_f5::text, true);
+  perform set_config('test.r_f6', v_f6::text, true);
+  perform set_config('test.r_f7', v_f7::text, true);
+  perform set_config('test.r_f9', v_f9::text, true);
+  perform set_config('test.r_g2', v_g2::text, true);
+  perform set_config('test.r_g3', v_g3::text, true);
+  perform set_config('test.r_g4', v_g4::text, true);
+  perform set_config('test.r_g8', v_g8::text, true);
+  perform set_config('test.r_g9', v_g9::text, true);
+  perform set_config('test.r_p1', v_p1::text, true);
+  perform set_config('test.r_p2', v_p2::text, true);
+
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_f3) = 150000
+               and (select saldo_pendiente from public.facturas where id_factura = v_f4) = 105000
+               and (select saldo_pendiente from public.facturas where id_factura = v_f5) = 100000
+               and (select saldo_pendiente from public.gastos where id = v_g2) = 35000
+               and (select saldo_pendiente from public.gastos where id = v_g8) = 33000,
+               'el escenario deja los saldos esperados (cobro y pago anulados restauran el saldo)');
+end $$;
+
+-- ─── Functions: invoker, stable, privileges ──────────────────────────────
+do $$
+declare
+  v_fn text; v_oid oid;
+begin
+  foreach v_fn in array array[
+    'public.fn_rep_resultado(date, date)', 'public.fn_rep_cxc(date)', 'public.fn_rep_cxp(date)',
+    'public.fn_rep_flujo_fondos(date, date)', 'public.fn_rep_movimientos_fondo(bigint, date, date)',
+    'public.fn_rep_libro_iva(integer)'] loop
+    v_oid := v_fn::regprocedure::oid;
+    perform t.ok(not (select prosecdef from pg_proc where oid = v_oid), v_fn || ' es security invoker');
+    perform t.ok((select provolatile from pg_proc where oid = v_oid) = 's', v_fn || ' es stable');
+    perform t.ok(exists (select 1 from pg_proc where oid = v_oid and proconfig @> array['search_path=public']),
+                 v_fn || ' fija search_path = public');
+    perform t.ok(has_function_privilege('authenticated', v_oid, 'execute')
+                 and not has_function_privilege('anon', v_oid, 'execute')
+                 and not exists (select 1 from pg_proc p, aclexplode(p.proacl) a where p.oid = v_oid and a.grantee = 0),
+                 v_fn || ' solo lo ejecuta authenticated (ni anon ni PUBLIC)');
+  end loop;
+
+  perform t.anonimo();
+  perform t.falla($f$select * from public.fn_rep_resultado(date '2026-01-01', date '2026-12-31')$f$, '42501', 'anon no ejecuta fn_rep_resultado');
+  perform t.falla($f$select * from public.fn_rep_cxc()$f$, '42501', 'anon no ejecuta fn_rep_cxc');
+  perform t.falla($f$select * from public.fn_rep_cxp()$f$, '42501', 'anon no ejecuta fn_rep_cxp');
+  perform t.falla($f$select * from public.fn_rep_flujo_fondos(date '2026-01-01', date '2026-12-31')$f$, '42501', 'anon no ejecuta fn_rep_flujo_fondos');
+  perform t.falla($f$select * from public.fn_rep_movimientos_fondo(1, date '2026-01-01', date '2026-12-31')$f$, '42501', 'anon no ejecuta fn_rep_movimientos_fondo');
+  perform t.falla($f$select * from public.fn_rep_libro_iva(2026)$f$, '42501', 'anon no ejecuta fn_rep_libro_iva');
+  perform t.volver();
+end $$;
+
+-- ─── fn_rep_resultado ────────────────────────────────────────────────────
+do $$
+declare
+  v10 bigint := t.g('r_cv10')::bigint; v5 bigint := t.g('r_cv5')::bigint; vex bigint := t.g('r_cvex')::bigint;
+  c1 bigint := t.g('r_c1')::bigint; c2 bigint := t.g('r_c2')::bigint;
+  n bigint; v_ing numeric; v_egr numeric;
+begin
+  perform t.actuar(t.g('hr_admin'), t.g('hr')::bigint);
+
+  -- Whole scenario (annulled documents and their reversals excluded).
+  select count(*) into n from (values
+    (date '2026-03-01', v10, 350000::numeric), (date '2026-04-01', v10, 130000), (date '2026-06-01', v10, 10000),
+    (date '2026-03-01', v5, 120000),
+    (date '2026-03-01', vex, 50000), (date '2026-06-01', vex, 30000),
+    (date '2026-03-01', c1, 170000), (date '2026-04-01', c1, 20000), (date '2026-05-01', c1, 80000), (date '2026-06-01', c1, 10000),
+    (date '2026-03-01', c2, 90000), (date '2026-04-01', c2, 30000)
+  ) e (mes, cat, monto)
+  join public.fn_rep_resultado(date '2026-03-01', date '2026-06-30') r
+    on r.mes = e.mes and r.fk_categoria = e.cat and r.monto = e.monto;
+  perform t.ok(n = 12 and (select count(*) from public.fn_rep_resultado(date '2026-03-01', date '2026-06-30')) = 12,
+               'resultado: 12 filas mes x categoria con los montos calculados a mano');
+  perform t.ok((select bool_and((r.tipo = 'ingreso') = (r.fk_categoria in (v10, v5, vex)))
+                from public.fn_rep_resultado(date '2026-03-01', date '2026-06-30') r),
+               'resultado: tipo ingreso para ventas y egreso para el resto');
+  perform t.ok((select array_agg(r.mes order by ord) from (select r.mes, row_number() over () as ord
+                from public.fn_rep_resultado(date '2026-03-01', date '2026-06-30') r) r)
+               = array[date '2026-03-01', date '2026-03-01', date '2026-03-01', date '2026-03-01', date '2026-03-01',
+                       date '2026-04-01', date '2026-04-01', date '2026-04-01', date '2026-05-01',
+                       date '2026-06-01', date '2026-06-01', date '2026-06-01'],
+               'resultado: ordenado por mes');
+
+  -- A range that reaches into the future still excludes annulled documents:
+  -- their entries and the reversals (dated today) are ANULADO.
+  select coalesce(sum(monto) filter (where tipo = 'ingreso'), 0), coalesce(sum(monto) filter (where tipo = 'egreso'), 0)
+    into v_ing, v_egr from public.fn_rep_resultado(date '2020-01-01', date '2099-12-31');
+  perform t.ok(v_ing = 690000 and v_egr = 400000,
+               'resultado: los documentos anulados y sus reversos no suman (ingresos 690.000, egresos 400.000)');
+
+  -- Narrow ranges, inclusive on both ends.
+  select count(*) into n from (values (date '2026-04-01', v10, 130000::numeric), (date '2026-04-01', c1, 20000), (date '2026-04-01', c2, 30000)) e (mes, cat, monto)
+  join public.fn_rep_resultado(date '2026-04-01', date '2026-04-30') r on r.mes = e.mes and r.fk_categoria = e.cat and r.monto = e.monto;
+  perform t.ok(n = 3 and (select count(*) from public.fn_rep_resultado(date '2026-04-01', date '2026-04-30')) = 3,
+               'resultado: un solo mes devuelve solo sus categorias con movimiento');
+  perform t.ok((select count(*) from public.fn_rep_resultado(date '2026-03-05', date '2026-03-05')) = 3
+               and (select sum(monto) from public.fn_rep_resultado(date '2026-03-05', date '2026-03-05')) = 170000,
+               'resultado: los extremos del rango son inclusivos (un solo dia)');
+  perform t.ok((select count(*) from public.fn_rep_resultado(date '2026-07-01', date '2026-12-31')) = 0
+               and (select count(*) from public.fn_rep_resultado(date '2026-06-30', date '2026-03-01')) = 0
+               and (select count(*) from public.fn_rep_resultado(null, null)) = 0,
+               'resultado: sin movimiento, rango invertido o nulo no devuelve filas');
+  perform t.volver();
+end $$;
+
+-- ─── fn_rep_cxc ──────────────────────────────────────────────────────────
+do $$
+declare
+  f3 bigint := t.g('r_f3')::bigint; f4 bigint := t.g('r_f4')::bigint; f5 bigint := t.g('r_f5')::bigint;
+  f6 bigint := t.g('r_f6')::bigint; f7 bigint := t.g('r_f7')::bigint; f9 bigint := t.g('r_f9')::bigint;
+  n bigint; v_hoy date := (now() at time zone 'America/Asuncion')::date;
+begin
+  perform t.actuar(t.g('hr_admin'), t.g('hr')::bigint);
+
+  select count(*) into n from (values
+    (f4, 105000::numeric, 110, '+90', date '2026-03-12'),
+    (f3, 150000, 77, '61-90', date '2026-04-14'),
+    (f7, 33000, 51, '31-60', date '2026-05-10'),
+    (f9, 11000, 20, '1-30', date '2026-06-10'),
+    (f5, 100000, 15, '1-30', date '2026-06-15'),
+    (f6, 30000, 0, 'vigente', date '2026-07-20')
+  ) e (id, saldo, dias, bucket, vence)
+  join public.fn_rep_cxc(date '2026-06-30') r
+    on r.id_factura = e.id and r.saldo_pendiente = e.saldo and r.dias_vencido = e.dias
+       and r.bucket = e.bucket and r.fecha_vencimiento = e.vence;
+  perform t.ok(n = 6 and (select count(*) from public.fn_rep_cxc(date '2026-06-30')) = 6,
+               'cxc: 6 facturas pendientes con dias y tramo calculados (contado, anuladas y saldadas no entran)');
+  perform t.ok((select array_agg(x.id_factura) from public.fn_rep_cxc(date '2026-06-30') x) = array[f4, f3, f7, f9, f5, f6],
+               'cxc: la deuda mas vieja primero');
+  perform t.ok((select sum(saldo_pendiente) from public.fn_rep_cxc(date '2026-06-30')) = 429000,
+               'cxc: el saldo total es 429.000');
+  perform t.ok((select (cliente, documento, nro, total_general, fecha_emision)
+                     = ('Cliente hr', '1234567', (select nro_secuencial::text from public.facturas where id_factura = f3),
+                        220000, date '2026-03-15')
+                from public.fn_rep_cxc(date '2026-06-30') where id_factura = f3),
+               'cxc: cliente, documento, numero, total y fecha de emision de la factura');
+  perform t.ok((select fecha_vencimiento = fecha_emision and dias_vencido = 20
+                from public.fn_rep_cxc(date '2026-06-30') where id_factura = f9),
+               'cxc: sin fecha de vencimiento la factura vence el dia de la emision');
+
+  -- Every credit invoice is "vigente" before any due date.
+  perform t.ok((select count(*) from public.fn_rep_cxc(date '2026-03-01')) = 6
+               and (select bool_and(bucket = 'vigente' and dias_vencido = 0) from public.fn_rep_cxc(date '2026-03-01')),
+               'cxc: con un corte anterior a los vencimientos todo esta vigente');
+  -- Same balance, different cutoff: the balance is the current one.
+  perform t.ok((select sum(saldo_pendiente) from public.fn_rep_cxc(date '2026-03-01')) = 429000,
+               'cxc: el corte solo cambia la antiguedad, no el saldo');
+
+  -- Bucket boundaries on f9 (due 2026-06-10).
+  select count(*) into n from (values
+    (date '2026-06-10', 0, 'vigente'), (date '2026-07-10', 30, '1-30'), (date '2026-07-11', 31, '31-60'),
+    (date '2026-08-09', 60, '31-60'), (date '2026-08-10', 61, '61-90'), (date '2026-09-08', 90, '61-90'),
+    (date '2026-09-09', 91, '+90')
+  ) e (corte, dias, bucket)
+  where exists (select 1 from public.fn_rep_cxc(e.corte) r
+                where r.id_factura = f9 and r.dias_vencido = e.dias and r.bucket = e.bucket);
+  perform t.ok(n = 7, 'cxc: los limites 30/31, 60/61 y 90/91 caen en el tramo correcto');
+
+  -- Default cutoff = today (America/Asuncion).
+  perform t.ok((select dias_vencido from public.fn_rep_cxc() where id_factura = f4) = v_hoy - date '2026-03-12'
+               and (select count(*) from public.fn_rep_cxc()) = 6,
+               'cxc: sin corte se usa el dia de hoy en America/Asuncion');
+  perform t.volver();
+end $$;
+
+-- ─── fn_rep_cxp ──────────────────────────────────────────────────────────
+do $$
+declare
+  g2 bigint := t.g('r_g2')::bigint; g3 bigint := t.g('r_g3')::bigint; g4 bigint := t.g('r_g4')::bigint;
+  g8 bigint := t.g('r_g8')::bigint; g9 bigint := t.g('r_g9')::bigint;
+  n bigint; v_hoy date := (now() at time zone 'America/Asuncion')::date;
+begin
+  perform t.actuar(t.g('hr_admin'), t.g('hr')::bigint);
+
+  select count(*) into n from (values
+    (g4, 42000::numeric, 121, '+90', date '2026-03-01'),
+    (g2, 35000, 67, '61-90', date '2026-04-24'),
+    (g8, 33000, 31, '31-60', date '2026-05-30'),
+    (g9, 10000, 10, '1-30', date '2026-06-20'),
+    (g3, 80000, 0, 'vigente', date '2026-06-30')
+  ) e (id, saldo, dias, bucket, vence)
+  join public.fn_rep_cxp(date '2026-06-30') r
+    on r.id_gasto = e.id and r.saldo_pendiente = e.saldo and r.dias_vencido = e.dias
+       and r.bucket = e.bucket and r.fecha_vencimiento = e.vence;
+  perform t.ok(n = 5 and (select count(*) from public.fn_rep_cxp(date '2026-06-30')) = 5,
+               'cxp: 5 gastos a credito con saldo, con dias y tramo (contado, anulados y el pago anulado no cuentan)');
+  perform t.ok((select array_agg(x.id_gasto) from public.fn_rep_cxp(date '2026-06-30') x) = array[g4, g2, g8, g9, g3],
+               'cxp: la deuda mas vieja primero (vence el dia del corte = vigente)');
+  perform t.ok((select sum(saldo_pendiente) from public.fn_rep_cxp(date '2026-06-30')) = 200000,
+               'cxp: el saldo total es 200.000');
+  perform t.ok((select (proveedor, ruc, nro_comprobante, total, fecha)
+                     = ('Proveedor Uno R', '80066666-1', 'C-002', 55000, date '2026-03-25')
+                from public.fn_rep_cxp(date '2026-06-30') where id_gasto = g2)
+               and (select (proveedor, ruc is null, nro_comprobante is null)
+                         = ('Proveedor Uno R', false, true)
+                    from public.fn_rep_cxp(date '2026-06-30') where id_gasto = g9)
+               and (select ruc is null from public.fn_rep_cxp(date '2026-06-30') where id_gasto = g3),
+               'cxp: proveedor, RUC (puede faltar), comprobante (puede faltar), total y fecha');
+  perform t.ok((select fecha_vencimiento = fecha from public.fn_rep_cxp(date '2026-06-30') where id_gasto = g4),
+               'cxp: sin vencimiento el gasto vence en su fecha');
+  perform t.ok((select bool_and(bucket = 'vigente') from public.fn_rep_cxp(date '2026-03-01')),
+               'cxp: con un corte anterior a los vencimientos todo esta vigente');
+  perform t.ok((select dias_vencido from public.fn_rep_cxp() where id_gasto = g4) = v_hoy - date '2026-03-01',
+               'cxp: sin corte se usa el dia de hoy en America/Asuncion');
+  perform t.volver();
+end $$;
+
+-- ─── fn_rep_flujo_fondos y fn_rep_movimientos_fondo ──────────────────────
+do $$
+declare
+  fc bigint := t.g('r_fc')::bigint; fb bigint := t.g('r_fb')::bigint; fk bigint := t.g('r_fk')::bigint;
+  n bigint; v_ledger numeric; v_f record; v_ult numeric;
+begin
+  -- Ledger balance of the DISPONIBILIDADES children, straight from the entries.
+  select coalesce(sum(d.debe - d.haber), 0) into v_ledger
+  from public.detalle_asientos d
+  join public.asientos a on a.tenant_id = d.tenant_id and a.id = d.fk_asientos and a.estado = 'CONTABILIZADO'
+  join public.cuentas_contables c on c.tenant_id = d.tenant_id and c.id = d.fk_cuenta_contables
+  where d.tenant_id = t.g('hr')::bigint
+    and c.fk_cuenta_padre = public.fn_cuenta_por_clave(t.g('hr')::bigint, 'DISPONIBILIDADES');
+
+  perform t.actuar(t.g('hr_admin'), t.g('hr')::bigint);
+
+  select count(*) into n from (values
+    (fb, 5100000::numeric, 425000::numeric, 42000::numeric, 5483000::numeric),
+    (fc, 900000, 181000, 481000, 600000),
+    (fk, 0, 0, 0, 0)
+  ) e (id, ini, ing, egr, fin)
+  join public.fn_rep_flujo_fondos(date '2026-03-01', date '2026-04-30') r
+    on r.fk_fondo = e.id and r.saldo_inicial = e.ini and r.ingresos = e.ing and r.egresos = e.egr and r.saldo_final = e.fin;
+  perform t.ok(n = 3 and (select count(*) from public.fn_rep_flujo_fondos(date '2026-03-01', date '2026-04-30')) = 3,
+               'flujo: apertura, ingresos, egresos y cierre por fondo (marzo-abril), sin el fondo inactivo ocioso');
+  perform t.ok((select array_agg(x.fondo) from public.fn_rep_flujo_fondos(date '2026-03-01', date '2026-04-30') x)
+               = array['Banco R', 'Caja principal', 'Chica R'],
+               'flujo: ordenado por nombre del fondo; el fondo activo sin movimiento aparece en cero');
+  perform t.ok((select (tipo, activo) = ('banco', true) from public.fn_rep_flujo_fondos(date '2026-03-01', date '2026-04-30') where fk_fondo = fb)
+               and (select tipo from public.fn_rep_flujo_fondos(date '2026-03-01', date '2026-04-30') where fk_fondo = fc) = 'caja_turno',
+               'flujo: informa tipo y estado del fondo');
+
+  -- The next period opens with the previous closing balance.
+  select count(*) into n from (values (fb, 5483000::numeric, 0::numeric, 0::numeric, 5483000::numeric), (fc, 600000, 10000, 0, 610000), (fk, 0, 0, 0, 0)) e (id, ini, ing, egr, fin)
+  join public.fn_rep_flujo_fondos(date '2026-05-01', date '2026-06-30') r
+    on r.fk_fondo = e.id and r.saldo_inicial = e.ini and r.ingresos = e.ing and r.egresos = e.egr and r.saldo_final = e.fin;
+  perform t.ok(n = 3, 'flujo: el saldo inicial del periodo siguiente es el saldo final del anterior');
+
+  -- Entries after p_hasta are ignored; funds with movement only before p_desde still show.
+  perform t.ok((select (saldo_inicial, ingresos, egresos, saldo_final) = (1000000, 0, 0, 1000000)
+                from public.fn_rep_flujo_fondos(date '2026-02-21', date '2026-02-24') where fk_fondo = fc),
+               'flujo: un periodo sin movimiento arrastra el saldo de apertura');
+  perform t.ok((select (saldo_inicial, ingresos, egresos, saldo_final) = (0, 1000000, 100000, 900000)
+                from public.fn_rep_flujo_fondos(date '2026-01-01', date '2026-02-28') where fk_fondo = fc),
+               'flujo: apertura y transferencia de febrero dentro del rango');
+  perform t.ok((select count(*) from public.fn_rep_flujo_fondos(date '2020-01-01', date '2020-12-31')) = 3
+               and (select bool_and(saldo_inicial = 0 and ingresos = 0 and egresos = 0 and saldo_final = 0)
+                    from public.fn_rep_flujo_fondos(date '2020-01-01', date '2020-12-31')),
+               'flujo: antes de cualquier movimiento los fondos activos salen en cero');
+
+  -- The sum of the fund balances equals the ledger of the DISPONIBILIDADES children.
+  perform t.ok(v_ledger = 6093000
+               and (select sum(saldo_final) from public.fn_rep_flujo_fondos(date '2020-01-01', date '2099-12-31')) = v_ledger,
+               'flujo: la suma de los saldos de los fondos coincide con el libro mayor de Disponibilidades (6.093.000)');
+  perform t.ok((select count(*) from public.fn_rep_flujo_fondos(date '2020-01-01', date '2099-12-31') r where r.fk_fondo = t.g('r_fi')::bigint) = 0,
+               'flujo: un fondo inactivo sin movimiento no se lista');
+
+  -- Movements of the cash fund, March..June.
+  select count(*) into n from (values
+    (1, date '2026-03-05', 'factura', 181000::numeric, 0::numeric, 1081000::numeric),
+    (2, date '2026-03-08', 'gasto', 0, 181000, 900000),
+    (3, date '2026-04-10', 'transferencia', 0, 300000, 600000),
+    (4, date '2026-05-02', 'cobro', 10000, 0, 610000)
+  ) e (ord, fecha, origen, debe, haber, saldo)
+  join (select row_number() over () as ord, m.* from public.fn_rep_movimientos_fondo(fc, date '2026-03-01', date '2026-06-30') m) r
+    on r.ord = e.ord and r.fecha = e.fecha and r.origen_tipo = e.origen and r.debe = e.debe and r.haber = e.haber
+       and r.saldo_acumulado = e.saldo;
+  perform t.ok(n = 4 and (select count(*) from public.fn_rep_movimientos_fondo(fc, date '2026-03-01', date '2026-06-30')) = 4,
+               'movimientos: lineas del fondo en orden, con el saldo acumulado desde la apertura del rango');
+  perform t.ok((select bool_and(descripcion is not null and nro_asiento is not null and fk_origen is not null)
+                from public.fn_rep_movimientos_fondo(fc, date '2026-03-01', date '2026-06-30')),
+               'movimientos: cada linea trae descripcion, numero de asiento y documento de origen');
+  perform t.ok((select count(*) from public.fn_rep_movimientos_fondo(fc, date '2026-04-01', date '2026-04-30')) = 1
+               and (select saldo_acumulado from public.fn_rep_movimientos_fondo(fc, date '2026-04-01', date '2026-04-30')) = 600000,
+               'movimientos: el saldo acumulado arranca del saldo del fondo antes de p_desde');
+
+  -- Banco: five lines, ending on the same balance as the flow report.
+  select count(*) into n from (values
+    (1, date '2026-03-12', 'factura', 55000::numeric, 0::numeric, 5155000::numeric),
+    (2, date '2026-03-20', 'cobro', 70000, 0, 5225000),
+    (3, date '2026-04-02', 'pago', 0, 20000, 5205000),
+    (4, date '2026-04-10', 'transferencia', 300000, 0, 5505000),
+    (5, date '2026-04-15', 'gasto', 0, 22000, 5483000)
+  ) e (ord, fecha, origen, debe, haber, saldo)
+  join (select row_number() over () as ord, m.* from public.fn_rep_movimientos_fondo(fb, date '2026-03-01', date '2026-04-30') m) r
+    on r.ord = e.ord and r.fecha = e.fecha and r.origen_tipo = e.origen and r.debe = e.debe and r.haber = e.haber
+       and r.saldo_acumulado = e.saldo;
+  perform t.ok(n = 5 and (select count(*) from public.fn_rep_movimientos_fondo(fb, date '2026-03-01', date '2026-04-30')) = 5,
+               'movimientos: fondo banco con factura de tarjeta, cobro, pago, transferencia y gasto');
+
+  -- For every fund the last running balance is the closing balance of the flow report.
+  for v_f in select r.fk_fondo, r.saldo_final from public.fn_rep_flujo_fondos(date '2026-01-01', date '2026-06-30') r where r.saldo_final <> 0 loop
+    select m.saldo_acumulado into v_ult
+    from public.fn_rep_movimientos_fondo(v_f.fk_fondo, date '2026-01-01', date '2026-06-30') m
+    order by m.fecha desc, m.nro_asiento desc limit 1;
+    perform t.ok(v_ult = v_f.saldo_final, 'movimientos: el ultimo saldo acumulado del fondo ' || v_f.fk_fondo || ' es su saldo final del flujo');
+  end loop;
+
+  perform t.ok((select count(*) from public.fn_rep_movimientos_fondo(fk, date '2020-01-01', date '2099-12-31')) = 0
+               and (select count(*) from public.fn_rep_movimientos_fondo(fc, date '2020-01-01', date '2020-12-31')) = 0
+               and (select count(*) from public.fn_rep_movimientos_fondo(-1, date '2020-01-01', date '2099-12-31')) = 0,
+               'movimientos: fondo sin movimiento, rango sin movimiento o fondo inexistente no devuelven filas');
+  perform t.volver();
+end $$;
+
+-- ─── fn_rep_libro_iva ────────────────────────────────────────────────────
+do $$
+declare
+  n bigint;
+begin
+  perform t.actuar(t.g('hr_admin'), t.g('hr')::bigint);
+
+  select count(*) into n from (values
+    (1, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    (2, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    (3, 350000, 120000, 50000, 41000, 150000, 60000, 50000, 18000, 23000),
+    (4, 130000, 0, 0, 13000, 50000, 0, 0, 5000, 8000),
+    (5, 0, 0, 0, 0, 0, 0, 80000, 0, 0),
+    (6, 10000, 0, 30000, 1000, 0, 0, 10000, 0, 1000),
+    (7, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    (8, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    (9, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    (10, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    (11, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    (12, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+  ) e (mes, v10, v5, vex, deb, c10, c5, cex, cred, pagar)
+  join public.fn_rep_libro_iva(2026) r
+    on r.mes = e.mes and r.base_ventas_10 = e.v10 and r.base_ventas_5 = e.v5 and r.base_ventas_exentas = e.vex
+       and r.iva_debito = e.deb and r.compras_gravadas_10 = e.c10 and r.compras_gravadas_5 = e.c5
+       and r.compras_exentas = e.cex and r.iva_credito = e.cred and r.iva_a_pagar = e.pagar;
+  perform t.ok(n = 12 and (select count(*) from public.fn_rep_libro_iva(2026)) = 12,
+               'libro IVA: 12 meses con las bases y el IVA calculados a mano (marzo a junio con actividad)');
+  perform t.ok((select array_agg(mes) from public.fn_rep_libro_iva(2026)) = array[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+               'libro IVA: los meses van de 1 a 12 en orden');
+  perform t.ok((select count(*) from public.fn_rep_libro_iva(2025)) = 12
+               and (select bool_and(base_ventas_10 = 0 and base_ventas_5 = 0 and base_ventas_exentas = 0 and iva_debito = 0
+                                    and compras_gravadas_10 = 0 and compras_gravadas_5 = 0 and compras_exentas = 0
+                                    and iva_credito = 0 and iva_a_pagar = 0)
+                    from public.fn_rep_libro_iva(2025)),
+               'libro IVA: un año sin actividad devuelve igual 12 meses en cero');
+
+  -- Month by month, the ledger matches the documents.
+  perform t.ok((select count(*) from public.fn_rep_libro_iva(2026) r
+                where r.iva_debito = coalesce((select sum(f.total_iva) from public.facturas f
+                        where f.tenant_id = t.g('hr')::bigint and f.estado = 'EMITIDA'
+                          and extract(year from f.fecha_emision at time zone 'America/Asuncion') = 2026
+                          and extract(month from f.fecha_emision at time zone 'America/Asuncion') = r.mes), 0)
+                  and r.iva_credito = coalesce((select sum(g.iva_10 + g.iva_5) from public.gastos g
+                        where g.tenant_id = t.g('hr')::bigint and g.estado = 'REGISTRADO'
+                          and extract(year from g.fecha) = 2026 and extract(month from g.fecha) = r.mes), 0)
+                  and r.base_ventas_10 + r.base_ventas_5 + r.base_ventas_exentas + r.iva_debito
+                      = coalesce((select sum(f.total_general) from public.facturas f
+                        where f.tenant_id = t.g('hr')::bigint and f.estado = 'EMITIDA'
+                          and extract(year from f.fecha_emision at time zone 'America/Asuncion') = 2026
+                          and extract(month from f.fecha_emision at time zone 'America/Asuncion') = r.mes), 0)
+                  and r.compras_gravadas_10 + r.compras_gravadas_5 + r.compras_exentas + r.iva_credito
+                      = coalesce((select sum(g.total) from public.gastos g
+                        where g.tenant_id = t.g('hr')::bigint and g.estado = 'REGISTRADO'
+                          and extract(year from g.fecha) = 2026 and extract(month from g.fecha) = r.mes), 0)) = 12,
+               'libro IVA: cada mes coincide con las sumas de facturas y gastos (IVA, y bases + IVA = total)');
+  perform t.ok((select sum(iva_debito) from public.fn_rep_libro_iva(2026)) = 55000
+               and (select sum(iva_credito) from public.fn_rep_libro_iva(2026)) = 23000
+               and (select sum(iva_a_pagar) from public.fn_rep_libro_iva(2026)) = 32000,
+               'libro IVA: totales del año (debito 55.000, credito 23.000, a pagar 32.000)');
+  perform t.volver();
+end $$;
+
+-- ─── Who can read, other hotels, downgrade ───────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hr')::bigint; v_hp bigint := t.g('hp')::bigint;
+  v_hr_cats bigint[]; v_hr_facs bigint[]; v_hr_gastos bigint[];
+  v_rol text; v_h1 text; v_h2 text; n bigint;
+begin
+  select array_agg(id) into v_hr_cats from public.categorias_finanzas where tenant_id = v_t;
+  select array_agg(id_factura) into v_hr_facs from public.facturas where tenant_id = v_t;
+  select array_agg(id) into v_hr_gastos from public.gastos where tenant_id = v_t;
+
+  -- Admin and gerente read the same data.
+  perform t.actuar(t.g('hr_admin'), v_t);
+  v_h1 := t.huella();
+  perform t.volver();
+  perform t.actuar(t.g('hr_ger'), v_t);
+  v_h2 := t.huella();
+  perform t.ok(v_h1 = v_h2 and (select count(*) from public.fn_rep_resultado(date '2026-01-01', date '2026-12-31')) = 12
+               and (select count(*) from public.fn_rep_cxc(date '2026-06-30')) = 6,
+               'el gerente obtiene exactamente los mismos reportes que el admin');
+  perform t.volver();
+
+  -- Reception and cleaning get nothing, even where the source tables are readable (facturas, clientes).
+  foreach v_rol in array array['hr_rec', 'hr_lim'] loop
+    perform t.actuar(t.g(v_rol), v_t);
+    perform t.ok((select count(*) from public.facturas) > 0 and (select count(*) from public.clientes) > 0,
+                 v_rol || ': puede leer facturas y clientes (la fuente de cxc es legible)');
+    perform t.ok((select count(*) from public.fn_rep_resultado(date '2020-01-01', date '2099-12-31')) = 0
+                 and (select count(*) from public.fn_rep_cxc(date '2026-06-30')) = 0
+                 and (select count(*) from public.fn_rep_cxp(date '2026-06-30')) = 0
+                 and (select count(*) from public.fn_rep_flujo_fondos(date '2020-01-01', date '2099-12-31')) = 0
+                 and (select count(*) from public.fn_rep_movimientos_fondo(t.g('r_fc')::bigint, date '2020-01-01', date '2099-12-31')) = 0
+                 and (select count(*) from public.fn_rep_libro_iva(2026)) = 0,
+                 v_rol || ': los seis reportes devuelven 0 filas');
+    perform t.volver();
+  end loop;
+
+  -- Another hotel's admin never sees hr data, and sees its own.
+  perform t.actuar(t.g('hp_admin'), v_hp);
+  perform t.ok((select count(*) from public.fn_rep_resultado(date '2020-01-01', date '2099-12-31')) > 0
+               and (select count(*) from public.fn_rep_resultado(date '2020-01-01', date '2099-12-31') r where r.fk_categoria = any (v_hr_cats)) = 0,
+               'resultado: el admin de otro hotel ve lo suyo y nada de hr');
+  perform t.ok((select count(*) from public.fn_rep_cxc(date '2026-06-30') r where r.id_factura = any (v_hr_facs)) = 0
+               and (select count(*) from public.fn_rep_cxp(date '2026-06-30') r where r.id_gasto = any (v_hr_gastos)) = 0
+               and (select count(*) from public.fn_rep_flujo_fondos(date '2020-01-01', date '2099-12-31') where fondo in ('Banco R', 'Chica R', 'Zeta inactivo')) = 0
+               and (select count(*) from public.fn_rep_movimientos_fondo(t.g('r_fb')::bigint, date '2020-01-01', date '2099-12-31')) = 0,
+               'cxc, cxp, flujo y movimientos: el admin de otro hotel no ve datos de hr (ni un fondo ajeno por id)');
+  perform t.ok((select count(*) from public.fn_rep_libro_iva(2026)) = 12
+               and (select sum(iva_debito) from public.fn_rep_libro_iva(2026))
+                   = coalesce((select sum(f.total_iva) from public.facturas f
+                               where f.tenant_id = v_hp and f.estado = 'EMITIDA'
+                                 and extract(year from f.fecha_emision at time zone 'America/Asuncion') = 2026), 0)
+               and (select sum(iva_credito) from public.fn_rep_libro_iva(2026))
+                   = coalesce((select sum(g.iva_10 + g.iva_5) from public.gastos g
+                               where g.tenant_id = v_hp and g.estado = 'REGISTRADO' and extract(year from g.fecha) = 2026), 0),
+               'libro IVA: el admin de otro hotel suma solo sus propias facturas y gastos');
+  perform t.volver();
+  perform t.actuar(t.g('hr_admin'), v_t);
+  perform t.ok((select count(*) from public.fn_rep_movimientos_fondo(t.g('hp_fcaja')::bigint, date '2020-01-01', date '2099-12-31')) = 0
+               and (select count(*) from public.fn_rep_flujo_fondos(date '2020-01-01', date '2099-12-31')) = 3,
+               'hr no ve el fondo de otro hotel por id y su flujo lista solo sus 3 fondos');
+  perform t.volver();
+
+  -- Downgrade to basico: writes are gated, reads (and the reports) stay identical.
+  perform t.actuar(t.g('hr_admin'), v_t);
+  v_h1 := t.huella();
+  perform t.volver();
+  perform public.fn_activar_plan(v_t, 'basico', 'mensual', null, 'test-fin6-bajada');
+  perform t.actuar(t.g('hr_admin'), v_t);
+  perform t.falla(format('select t.gasto(%s, ''contado'', 1000, 0, 0, null, %s, %s)', v_t, t.g('r_fc'), t.g('r_c1')),
+                  '42501', 'tras bajar a basico ya no se registran gastos');
+  perform t.ok(t.huella() = v_h1 and (select count(*) from public.fn_rep_cxc(date '2026-06-30')) = 6,
+               'tras bajar a basico los seis reportes siguen legibles y no cambian');
+  perform t.volver();
+  perform public.fn_activar_plan(v_t, 'pro', 'mensual', null, 'test-fin6-subida');
 end $$;
 
 -- ═══ FIN (later tasks add their sections before this line) ═══

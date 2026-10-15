@@ -23,9 +23,18 @@ supabase/migrations/
   0012_guardas_ddl           event trigger: RLS en tablas nuevas, sin EXECUTE en funciones nuevas
   0013_multi_hotel           una cuenta, varios hoteles (un perfil por hotel) y fn_mis_hoteles
   0014_planes_suscripcion    planes, topes, modulos, solo lectura al vencer, fn_activar_plan
+  0015_registro_publico      rate limit y RPC publicas del alta de hoteles
+  0016_contabilidad_base     base de partida doble: fn_contabilizar, asiento_secuencia, RLS admin/gerente
+  0017_plan_cuentas_hotelero plan de cuentas hotelero, categorias_finanzas y backfill
+  0018_fondos_facturas_credito  fondos (caja, banco), facturas a credito y su asiento
+  0019_gastos_cobros_pagos   proveedores, gastos, cobros, pagos, transferencias, saldos iniciales
+  0020_cierre_mensual        cierre y reapertura de meses (fn_cerrar_mes / fn_reabrir_mes)
+  0021_reportes_finanzas     RPC de reportes de finanzas (fn_rep_*)
 supabase/seed.sql            catalogos minimos (solo desarrollo / respaldo)
-tests/aislamiento.sql        suite de aislamiento entre dos tenants
+tests/aislamiento.sql        suite de aislamiento entre dos tenants (incluye finanzas)
 tests/planes.sql             suite de planes y suscripciones
+tests/finanzas.sql           suite del modulo de finanzas (contabilizacion, cierre, reportes)
+tests/registro_publico.sql   suite del alta publica de hoteles
 ```
 
 ## Puesta en marcha
@@ -271,8 +280,11 @@ La suscripcion es **por hotel** (`tenants`). Catalogo en `planes` (legible por
   `trial_fin >= hoy`, o `estado = 'activo'` con `vigente_hasta >= hoy`. El SELECT,
   el login y `switch-hotel` no se tocan. Las funciones definer saltan RLS.
 - **Modulos:** escritura en `cuentas_contables`, `asientos`, `detalle_asientos`,
-  `saldos_mensuales` exige `mod_contabilidad`; en `timbrados` y
-  `datos_factura_sifen`, `mod_sifen`.
+  `saldos_mensuales` y, desde 0018/0019, en `cuentas_fondos`, `medios_pago_fondo`,
+  `categorias_finanzas`, `proveedores`, `gastos`, `cobros`, `pagos`,
+  `transferencias_fondos` y `saldos_iniciales_fondos` exige `mod_contabilidad`
+  (ver "Finanzas"); en `timbrados` y `datos_factura_sifen`, `mod_sifen`. Las
+  lecturas, incluidos los reportes `fn_rep_*`, no se bloquean.
 - **Hoteles por cuenta:** `fn_max_hoteles_cuenta()` (usa `auth.uid()`, hay que
   llamarla con el JWT del usuario) da el mayor tope entre los hoteles que la cuenta
   administra; `null` es ilimitado. `create-hotel` la consume con el cliente que lleva el
@@ -288,6 +300,104 @@ La suscripcion es **por hotel** (`tenants`). Catalogo en `planes` (legible por
   usuarios; la landing publica (RPC definer) sigue aceptando reservas de un hotel
   vencido mientras su estado sea `trial`/`activo`; Storage no se bloquea por
   vencimiento; las fechas usan `current_date` del servidor (UTC en Supabase).
+
+## Finanzas
+
+Contabilidad simple para el hotel (ingresos, egresos, cuentas por cobrar y por
+pagar, fondos, cierre mensual y reportes) construida sobre la partida doble que
+ya existia (`cuentas_contables`, `asientos`, `detalle_asientos`). La interfaz oculta
+debe/haber: el usuario ve gastos, cobros, pagos y fondos, y los triggers escriben
+los asientos en la misma transaccion del documento. Migraciones 0016 a 0021.
+
+- **Quien:** solo admin y gerente. Las tablas contables y las de finanzas usan la
+  regla `admin_gerente_total` (0006): leer y escribir. Recepcion puede emitir una
+  factura a credito pero no ve saldos ni cobra; `asiento_secuencia` es la unica
+  excepcion de lectura (un contador, lo lee cualquier usuario activo del hotel).
+- **Plan:** escribir exige `mod_contabilidad` y suscripcion vigente (policies
+  `RESTRICTIVE` de 0014/0018/0019); facturar a credito tambien exige el modulo. Los asientos
+  se generan tambien en `basico` (si el hotel sube de plan no pierde historia),
+  pero un hotel que baja a `basico` no registra cobros ni pagos. **Las lecturas
+  nunca se bloquean:** tras una baja de plan siguen funcionando los reportes.
+- **Desde cuando:** el libro arranca en la fecha de activacion; las facturas
+  anteriores no se contabilizan. `saldos_mensuales` queda sin uso: los saldos se
+  calculan siempre desde `detalle_asientos`.
+- **Hora:** el dia contable es `America/Asuncion`, nunca el UTC del servidor. El
+  asiento de un documento lleva su fecha (mediodia local); el reverso de una anulacion, el dia
+  de la anulacion.
+
+### Tablas
+
+| Migracion | Tablas y funciones |
+|---|---|
+| 0016 | `cuentas_contables` (`clave` de sistema, `activo`), `asientos` (numero unico por hotel con `asiento_secuencia`), `detalle_asientos` (constraint trigger diferido: debe = haber), `fn_contabilizar` y `fn_contabilizar_reverso` (definer, **sin EXECUTE**) |
+| 0017 | `tipo_cuenta_contable`, plan de cuentas hotelero en `plantilla-base` (copiado a cada hotel nuevo y rellenado a los existentes), `categorias_finanzas` (una por cuenta de ingreso/egreso) |
+| 0018 | `cuentas_fondos` (caja de turno, caja chica, banco; cada una con su cuenta hija de 1.1.01 Disponibilidades), `medios_pago_fondo` (modo de pago -> fondo), `facturas.fecha_vencimiento` / `saldo_pendiente`, `fk_modo_pago` nullable (credito) |
+| 0019 | `proveedores`, `gastos`, `cobros`, `pagos`, `transferencias_fondos`, `saldos_iniciales_fondos` |
+| 0020 | `periodos_cerrados`, `fn_cerrar_mes(anio, mes)`, `fn_reabrir_mes(anio, mes)` |
+| 0021 | RPC de reportes `fn_rep_*` |
+
+Los documentos (`gastos`, `cobros`, `pagos`, `transferencias_fondos`,
+`saldos_iniciales_fondos`) nacen `REGISTRADO`, no se borran y no se editan salvo
+campos descriptivos: se anulan (`ANULADO`) y se cargan de nuevo. Los importes
+(`iva_*`, `total`, `saldo_pendiente`) los calcula el trigger, no el cliente.
+
+### Contabilizacion por evento
+
+El IVA esta incluido en los montos. En facturas `iva5 = round(gravado_5 / 21)` e
+`iva10 = total_iva - iva5`; en gastos `iva_10 = round(gravado_10 / 11)`.
+
+| Evento | Debe | Haber |
+|---|---|---|
+| Factura de contado | Fondo (segun el modo de pago; sin mapa, el de la caja del turno) | `VENTAS_10`, `VENTAS_5`, `VENTAS_EXENTAS` (sin IVA) e `IVA_DEBITO` |
+| Factura a credito | `CXC_CLIENTES` (`saldo_pendiente = total`) | igual que la de contado |
+| Cobro | Fondo | `CXC_CLIENTES` (baja el saldo; rechaza monto > saldo) |
+| Gasto de contado | Cuenta de la categoria (sin IVA) e `IVA_CREDITO` | Fondo que pago |
+| Gasto a credito | Cuenta de la categoria e `IVA_CREDITO` | `CXP_PROVEEDORES` (`saldo_pendiente = total`) |
+| Pago | `CXP_PROVEEDORES` | Fondo |
+| Transferencia | Fondo destino | Fondo origen |
+| Saldo inicial | Fondo | `SALDOS_INICIALES` |
+| Anulacion | asiento inverso; original y reverso quedan `ANULADO` | saldo restaurado (cobro, pago) o en cero (gasto, factura) |
+
+Anular una factura o un gasto se bloquea mientras tenga cobros o pagos activos.
+Un error de contabilizacion (por ejemplo falta una cuenta de sistema) aborta el
+documento con un mensaje en espanol: el backfill y los fondos autocreados
+(`fn_asegurar_fondos_cajas`) existen para que un hotel no quede sin cuentas.
+
+### Cierre mensual
+
+El admin cierra y reabre meses con `fn_cerrar_mes` / `fn_reabrir_mes` (no hay cierre
+de ejercicio). Con un mes cerrado, el trigger `a00_periodo_cerrado` rechaza (`55000`,
+"El periodo YYYY-MM esta cerrado.") crear, editar, anular o borrar facturas, gastos,
+cobros, pagos, transferencias, saldos iniciales, asientos y detalles con fecha en ese
+mes (se revisa la fecha vieja y la nueva). Anular hoy un documento de un mes abierto
+exige que el mes de hoy tambien este abierto, porque el reverso se fecha hoy. Cerrar
+el mes en curso esta permitido. `periodos_cerrados` solo se escribe por las RPC.
+
+### Reportes
+
+RPC `security invoker`, `stable`, con `EXECUTE` solo para `authenticated`. Filtran
+por `tenant_id = current_tenant_id()` y devuelven filas solo a admin y gerente
+(`current_es_admin_o_gerente()`; recepcion y limpieza reciben 0 filas aunque puedan
+leer facturas). Leen solo asientos `CONTABILIZADO`: los documentos anulados y sus
+reversos no aparecen. Fechas y montos: `date` y `numeric` (guaranies), dia contable
+`America/Asuncion`.
+
+| RPC | Columnas |
+|---|---|
+| `fn_rep_resultado(p_desde date, p_hasta date)` | `mes` (primer dia), `fk_categoria`, `categoria`, `tipo` (`ingreso`/`egreso`), `monto`. Una fila por mes y categoria con movimiento; ingreso = haber - debe, egreso = debe - haber. |
+| `fn_rep_cxc(p_corte date default null)` | `fk_cliente`, `cliente`, `documento`, `id_factura`, `nro`, `fecha_emision`, `fecha_vencimiento`, `total_general`, `saldo_pendiente`, `dias_vencido`, `bucket` (`vigente`, `1-30`, `31-60`, `61-90`, `+90`). Facturas a credito emitidas con saldo > 0. |
+| `fn_rep_cxp(p_corte date default null)` | `fk_proveedor`, `proveedor`, `ruc`, `id_gasto`, `nro_comprobante`, `fecha`, `fecha_vencimiento`, `total`, `saldo_pendiente`, `dias_vencido`, `bucket`. Gastos a credito registrados con saldo > 0. |
+| `fn_rep_flujo_fondos(p_desde date, p_hasta date)` | `fk_fondo`, `fondo`, `tipo`, `activo`, `saldo_inicial` (antes de `p_desde`), `ingresos` (debe), `egresos` (haber), `saldo_final`. Fondos activos o con movimiento hasta `p_hasta`; las transferencias cuentan como ingreso y egreso. |
+| `fn_rep_movimientos_fondo(p_fondo bigint, p_desde date, p_hasta date)` | `fecha`, `nro_asiento`, `descripcion`, `origen_tipo`, `fk_origen`, `debe`, `haber`, `saldo_acumulado` (arranca del saldo del fondo antes de `p_desde`). Un fondo ajeno o inexistente no devuelve filas. |
+| `fn_rep_libro_iva(p_anio integer)` | 12 filas (`mes` 1..12, con ceros): `base_ventas_10`, `base_ventas_5`, `base_ventas_exentas`, `iva_debito`, `compras_gravadas_10`, `compras_gravadas_5` (netas de IVA), `compras_exentas`, `iva_credito`, `iva_a_pagar` = debito - credito. Resumen de gestion, **no** el archivo RG 90. |
+
+- `saldo_pendiente` de CxC y CxP es el saldo **actual**: no se reconstruye a la fecha
+  de `p_corte`, que solo gobierna la antiguedad (`p_corte` null = hoy en
+  `America/Asuncion`). `dias_vencido` es `p_corte - fecha_vencimiento`, 0 si aun no
+  vence; sin fecha de vencimiento el documento vence el dia de su emision o fecha.
+- `fn_rep_libro_iva` toma ventas e IVA del libro mayor (cuentas `VENTAS_*`,
+  `IVA_DEBITO`, `IVA_CREDITO`) y las bases de compras de los gastos registrados; las
+  pruebas comprueban que ambas fuentes coinciden mes a mes.
 
 ## Cambios obligatorios en el frontend
 
@@ -357,8 +467,11 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
 
 ## Decisiones abiertas
 
-- Escritura de `timbrados`, `cuentas_contables`, `asientos`, `detalle_asientos` y
-  `saldos_mensuales`: se propone `admin_gerente` (hoy cualquier usuario activo escribe).
+- Escritura de `timbrados`: se propone `admin_gerente` (hoy cualquier usuario activo
+  escribe). Resuelto para la contabilidad en 0016: `cuentas_contables`, `asientos`,
+  `detalle_asientos` y `saldos_mensuales` pasaron a `admin_gerente_total` (leen y
+  escriben solo admin y gerente) y los asientos los escriben triggers definer, no el
+  cliente. Ver "Finanzas".
 - Vencimiento: el trial y el pago se evaluan por fecha (`fn_suscripcion_vigente`), sin cron; un hotel vencido queda en solo lectura. No hay aviso previo ni pasarela de pago: ver "Planes y suscripciones".
 - **La RPC de reserva web sigue siendo publica.** Los topes de arriba acotan el
   abuso pero no lo impiden: sin captcha ni rate limit un atacante puede ocupar
@@ -372,8 +485,9 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
   fila borrada a otros tenants (sin datos).
 - `monedas` es global con cotizacion administrada por la plataforma.
 - No se agregaron unicidades cuyo conjunto de datos se desconoce (`nro_secuencial`
-  por establecimiento y tipo de factura, `nro_asiento`). Conviene sumarlas cuando
-  se confirme que el frontend no reutiliza numeros.
+  por establecimiento y tipo de factura). Conviene sumarlas cuando se confirme que
+  el frontend no reutiliza numeros. `nro_asiento` ya es unico por hotel desde 0016
+  (`asiento_secuencia`).
 - `fk_inmueble` en `facturas` sigue sin FK, igual que antes; se resuelve en la fase SIFEN.
 - **Hoteles de prueba sin limite real:** `create-hotel` solo topa 5 hoteles por
   cuenta. Sin captcha ni rate limit una cuenta puede encadenar altas; sumarlos
@@ -386,12 +500,22 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
 
 ```bash
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/aislamiento.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/finanzas.sql
 ```
 
-Requiere las migraciones 0001-0014 y `seed.sql`. Incluye la seccion "Una cuenta,
-dos hoteles" (cargo por hotel, visibilidad, `fn_mis_hoteles`, catalogos con el
+Requieren las migraciones 0001-0021 y `seed.sql` (`planes.sql` y
+`registro_publico.sql` se corren igual). `aislamiento.sql` incluye la seccion "Una
+cuenta, dos hoteles" (cargo por hotel, visibilidad, `fn_mis_hoteles`, catalogos con el
 hotel activo suspendido, trigger de perfiles y alta de un hotel para una cuenta
-existente).
+existente) y una seccion de finanzas (B no ve ni toca las tablas contables de A,
+recepcion y limpieza no leen nada, anon no entra). `finanzas.sql` cubre cada regla de
+contabilizacion, el cierre mensual y los reportes contra un escenario con cifras
+calculadas a mano.
 
 Corre en una transaccion que se revierte. Insertar en `auth.users` requiere un
 rol con permiso: usar una base local o de staging, no produccion.
+
+Sin un stack de Supabase, las suites se verificaron en un PostgreSQL 17 descartable
+con un esquema stub de `auth` y `storage` y los roles `anon`, `authenticated` y
+`service_role`. Los scripts de ese stub **no estan en el repo**; las suites tampoco se
+corrieron contra PostgREST ni contra concurrencia real.

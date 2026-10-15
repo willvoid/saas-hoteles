@@ -5,7 +5,7 @@
 -- puede ver, modificar ni enlazar datos del otro. Corre dentro de una
 -- transaccion y la revierte al final: no deja nada en la base.
 --
--- Requisitos: migraciones 0001-0014 y supabase/seed.sql aplicados.
+-- Requisitos: migraciones 0001-0021 y supabase/seed.sql aplicados.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/aislamiento.sql
 --
@@ -794,6 +794,190 @@ begin
   perform t.ok((select count(*) from public.fn_mis_hoteles()) = 3
                and (select es_activo from public.fn_mis_hoteles() where tenant_id = v_tc),
                'el selector lista los tres hoteles con el nuevo como activo');
+  perform t.volver();
+end $$;
+
+-- ─── Finanzas (0016-0021): aislamiento entre hoteles y por cargo ─────────────
+-- Las tablas de finanzas son solo para admin/gerente (regla admin_gerente_total):
+-- B no ve nada de A, la recepcionista y el limpiador no leen nada, anon no entra.
+do $$
+declare
+  v_ta bigint := t.g('ta')::bigint; v_tb bigint := t.g('tb')::bigint;
+  v_tab text; v_n bigint;
+  v_caja_a bigint; v_us_a bigint; v_cli_a bigint; v_turno_a bigint; v_fac_a bigint;
+  v_fcaja_a bigint; v_fbanco_a bigint; v_fcaja_b bigint;
+  v_cat_a bigint; v_cat_b bigint; v_prov_a bigint; v_prov_b bigint; v_gcred_a bigint;
+  v_cta_b bigint;
+  v_tablas text[] := array[
+    'cuentas_fondos', 'medios_pago_fondo', 'categorias_finanzas', 'proveedores', 'gastos', 'cobros',
+    'pagos', 'transferencias_fondos', 'saldos_iniciales_fondos', 'periodos_cerrados', 'asiento_secuencia',
+    'cuentas_contables', 'asientos', 'detalle_asientos'];
+begin
+  -- Datos base de A (superusuario): turno y una factura a credito.
+  select id_caja into v_caja_a from public.caja where tenant_id = v_ta order by id_caja limit 1;
+  select id_usuario into v_us_a from public.usuario where tenant_id = v_ta and auth_id = t.g('a_admin')::uuid;
+  select id_cliente into v_cli_a from public.clientes where tenant_id = v_ta and documento = 'CI-A';
+  insert into public.apertura_cierre_caja (tenant_id, monto_inicial, monto_final, fk_usuario, fk_caja)
+    values (v_ta, 0, 0, v_us_a, v_caja_a) returning id_turno into v_turno_a;
+  insert into public.facturas
+    (tenant_id, fecha_emision, fk_cliente, condicion_venta, total_gravado_10, total_gravado_5, total_exenta,
+     total_iva, total_general, observacion, fk_monedas, fk_establecimientos, fk_modo_pago, fk_tipo_factura,
+     nro_secuencial, fk_turno, tipo_emision, estado, efectivo, vuelto, descuento_global, fk_inmueble)
+  values
+    (v_ta, now(), v_cli_a, 2, 110000, 0, 0, 10000, 110000, '', (select min(id_monedas) from public.monedas),
+     t.g('a_estab')::bigint, null, (select min(id_tipo_factura) from public.tipo_factura),
+     9001, v_turno_a, 1, 'EMITIDA', 110000, 0, 0, 1)
+  returning id_factura into v_fac_a;
+
+  select id into v_fcaja_a from public.cuentas_fondos where tenant_id = v_ta and tipo = 'caja_turno' limit 1;
+  select id into v_fcaja_b from public.cuentas_fondos where tenant_id = v_tb and tipo = 'caja_turno' limit 1;
+  select id into v_cat_a from public.categorias_finanzas where tenant_id = v_ta and tipo = 'egreso' order by id limit 1;
+  select id into v_cat_b from public.categorias_finanzas where tenant_id = v_tb and tipo = 'egreso' order by id limit 1;
+  perform t.ok(v_fcaja_a is not null and v_fcaja_b is not null and v_cat_a is not null and v_cat_b is not null,
+               'cada hotel nace con su fondo de caja y su plan de categorias');
+
+  -- El admin de A carga datos en todas las tablas de finanzas.
+  perform t.actuar(t.g('a_admin'), v_ta);
+  insert into public.cuentas_fondos (nombre, tipo) values ('Banco A', 'banco') returning id into v_fbanco_a;
+  insert into public.medios_pago_fondo (fk_modo_pago, fk_fondo)
+    values ((select id_modo_pago from public.modo_pago where descripcion = 'Tarjeta'), v_fbanco_a);
+  insert into public.proveedores (nombre, ruc) values ('Proveedor A', '80070001-1') returning id into v_prov_a;
+  insert into public.gastos (fk_categoria, gravado_10, condicion, fk_cuenta_fondo)
+    values (v_cat_a, 11000, 'contado', v_fbanco_a);
+  insert into public.gastos (fk_categoria, gravado_10, condicion, fk_proveedor)
+    values (v_cat_a, 22000, 'credito', v_prov_a) returning id into v_gcred_a;
+  insert into public.pagos (fk_gasto, fk_cuenta_fondo, monto) values (v_gcred_a, v_fbanco_a, 5000);
+  insert into public.cobros (fk_factura, fk_cuenta_fondo, monto) values (v_fac_a, v_fbanco_a, 50000);
+  insert into public.transferencias_fondos (fk_fondo_origen, fk_fondo_destino, monto) values (v_fbanco_a, v_fcaja_a, 1000);
+  insert into public.saldos_iniciales_fondos (fk_cuenta_fondo, monto) values (v_fcaja_a, 200000);
+  perform public.fn_cerrar_mes(2026, 1);
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_fac_a) = 60000
+               and (select saldo_pendiente from public.gastos where id = v_gcred_a) = 17000,
+               'el admin de A registra gastos, pagos y cobros (los asientos los escriben los triggers)');
+  foreach v_tab in array v_tablas loop
+    perform t.ok(t.cuenta('select count(*) from public.' || v_tab) > 0, 'el admin de A lee ' || v_tab);
+  end loop;
+  perform t.volver();
+
+  -- B no ve, no modifica y no borra nada de A.
+  perform t.actuar(t.g('b_admin'), v_tb);
+  foreach v_tab in array v_tablas loop
+    perform t.ok(t.cuenta(format('select count(*) from public.%I where tenant_id = %s', v_tab, v_ta)) = 0,
+                 'B no ve filas de A en ' || v_tab);
+  end loop;
+  perform t.filas(format('update public.proveedores set nombre = ''x'' where tenant_id = %s', v_ta), 0,
+                  'B no modifica proveedores de A');
+  perform t.filas(format('update public.gastos set observacion = ''x'' where tenant_id = %s', v_ta), 0,
+                  'B no modifica gastos de A');
+  perform t.filas(format('update public.cuentas_fondos set activo = false where tenant_id = %s', v_ta), 0,
+                  'B no desactiva fondos de A');
+  perform t.filas(format('delete from public.proveedores where tenant_id = %s', v_ta), 0, 'B no borra proveedores de A');
+  perform t.filas(format('delete from public.categorias_finanzas where tenant_id = %s', v_ta), 0, 'B no borra categorias de A');
+  perform t.falla(format('delete from public.periodos_cerrados where tenant_id = %s', v_ta), '42501',
+                  'nadie reabre un mes borrando filas: solo fn_reabrir_mes');
+  perform t.falla(format('insert into public.proveedores (tenant_id, nombre) values (%s, ''Intruso'')', v_ta),
+                  '42501', 'B no inserta proveedores con el tenant de A');
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (%s, ''Banco intruso'', ''banco'')', v_ta),
+                  '42501', 'B no crea fondos con el tenant de A');
+  perform t.falla(format('insert into public.categorias_finanzas (tenant_id, nombre, tipo, fk_cuenta_contable) values (%s, ''Intrusa'', ''egreso'', (select id from public.cuentas_contables limit 1))', v_ta),
+                  '42501', 'B no crea categorias con el tenant de A');
+  perform t.falla(format('insert into public.periodos_cerrados (tenant_id, anio, mes, cerrado_por) values (%s, 2026, 2, 1)', v_tb),
+                  '42501', 'tampoco cierra meses escribiendo la tabla: solo fn_cerrar_mes');
+  perform t.falla('update public.asiento_secuencia set ultimo = 0', '42501', 'nadie reinicia la numeracion de asientos');
+
+  -- fn_cerrar_mes actua sobre el hotel del JWT: cerrar enero en B no toca el cierre de A.
+  perform public.fn_cerrar_mes(2026, 1);
+  perform t.ok(t.cuenta('select count(*) from public.periodos_cerrados') = 1
+               and t.cuenta(format('select count(*) from public.periodos_cerrados where tenant_id = %s', v_ta)) = 0,
+               'B cierra enero en su hotel y solo ve su propio cierre');
+  perform public.fn_reabrir_mes(2026, 1);
+
+  -- Reportes: cada hotel solo ve lo suyo.
+  perform t.ok(t.cuenta('select count(*) from public.fn_rep_resultado(date ''2020-01-01'', date ''2099-12-31'')') = 0
+               and t.cuenta('select count(*) from public.fn_rep_cxc()') = 0
+               and t.cuenta('select count(*) from public.fn_rep_cxp()') = 0
+               and t.cuenta('select count(*) from public.fn_rep_libro_iva(extract(year from now())::int) where iva_debito <> 0 or iva_credito <> 0') = 0
+               and t.cuenta('select count(*) from public.fn_rep_flujo_fondos(date ''2020-01-01'', date ''2099-12-31'') where fondo = ''Banco A''') = 0
+               and t.cuenta(format('select count(*) from public.fn_rep_movimientos_fondo(%s, date ''2020-01-01'', date ''2099-12-31'')', v_fbanco_a)) = 0,
+               'B no ve en los reportes de finanzas nada de A');
+  perform t.volver();
+
+  perform t.actuar(t.g('a_admin'), v_ta);
+  perform t.ok(t.cuenta('select count(*) from public.fn_rep_resultado(date ''2020-01-01'', date ''2099-12-31'')') > 0
+               and t.cuenta('select count(*) from public.fn_rep_cxc()') = 1
+               and t.cuenta('select count(*) from public.fn_rep_cxp()') = 1
+               and t.cuenta('select count(*) from public.fn_rep_flujo_fondos(date ''2020-01-01'', date ''2099-12-31'') where fondo = ''Banco A''') = 1
+               and t.cuenta(format('select count(*) from public.fn_rep_movimientos_fondo(%s, date ''2020-01-01'', date ''2099-12-31'')', v_fbanco_a)) > 0,
+               'A si ve sus propios reportes (una cuenta por cobrar, una por pagar, su banco)');
+  perform t.ok(t.cuenta('select count(*) from public.periodos_cerrados where mes = 1') = 1, 'A conserva su cierre de enero');
+  perform public.fn_reabrir_mes(2026, 1);
+  perform t.volver();
+
+  -- Integridad entre hoteles con FK compuestas (superusuario: RLS no aplica).
+  insert into public.proveedores (tenant_id, nombre) values (v_tb, 'Proveedor B') returning id into v_prov_b;
+  select fk_cuenta_contable into v_cta_b from public.categorias_finanzas where id = v_cat_b;
+  perform t.falla(format('insert into public.gastos (tenant_id, fk_categoria, fk_proveedor, gravado_10, condicion) values (%s, %s, %s, 1000, ''credito'')', v_tb, v_cat_b, v_prov_a),
+                  '23503', 'un gasto de B no usa el proveedor de A');
+  perform t.falla(format('insert into public.gastos (tenant_id, fk_categoria, gravado_10, condicion, fk_cuenta_fondo) values (%s, %s, 1000, ''contado'', %s)', v_tb, v_cat_a, v_fcaja_b),
+                  '23503', 'un gasto de B no usa la categoria de A');
+  perform t.falla(format('insert into public.gastos (tenant_id, fk_categoria, gravado_10, condicion, fk_cuenta_fondo) values (%s, %s, 1000, ''contado'', %s)', v_tb, v_cat_b, v_fbanco_a),
+                  '23503', 'un gasto de B no usa un fondo de A');
+  perform t.falla(format('insert into public.cobros (tenant_id, fk_factura, fk_cuenta_fondo, monto) values (%s, %s, %s, 1)', v_tb, v_fac_a, v_fcaja_b),
+                  '23503', 'un cobro de B no apunta a una factura de A');
+  perform t.falla(format('insert into public.pagos (tenant_id, fk_gasto, fk_cuenta_fondo, monto) values (%s, %s, %s, 1)', v_tb, v_gcred_a, v_fcaja_b),
+                  '23503', 'un pago de B no apunta a un gasto de A');
+  perform t.falla(format('insert into public.transferencias_fondos (tenant_id, fk_fondo_origen, fk_fondo_destino, monto) values (%s, %s, %s, 1)', v_tb, v_fcaja_b, v_fbanco_a),
+                  '23503', 'una transferencia de B no usa un fondo de A');
+  perform t.falla(format('insert into public.saldos_iniciales_fondos (tenant_id, fk_cuenta_fondo, monto) values (%s, %s, 1)', v_tb, v_fbanco_a),
+                  '23503', 'un saldo inicial de B no usa un fondo de A');
+  perform t.falla(format('insert into public.medios_pago_fondo (tenant_id, fk_modo_pago, fk_fondo) values (%s, (select id_modo_pago from public.modo_pago where descripcion = ''Tarjeta''), %s)', v_tb, v_fbanco_a),
+                  '23503', 'un medio de pago de B no apunta a un fondo de A');
+  perform t.falla(format('insert into public.categorias_finanzas (tenant_id, nombre, tipo, fk_cuenta_contable) values (%s, ''Cat cruzada'', ''egreso'', (select fk_cuenta_contable from public.categorias_finanzas where id = %s))', v_tb, v_cat_a),
+                  '23503', 'una categoria de B no apunta a una cuenta contable de A');
+  perform t.falla(format('insert into public.cuentas_fondos (tenant_id, nombre, tipo, fk_cuenta_contable) values (%s, ''Fondo cruzado'', ''banco'', (select fk_cuenta_contable from public.cuentas_fondos where id = %s))', v_tb, v_fbanco_a),
+                  '23503', 'un fondo de B no usa una cuenta contable de A');
+
+  -- Recepcionista y limpiador: ninguna tabla de finanzas, ningun reporte, sin escritura.
+  perform t.actuar(t.g('a_rec'), v_ta);
+  -- asiento_secuencia (solo un contador, regla solo_lectura) lo lee cualquier usuario activo del hotel.
+  foreach v_tab in array array_remove(v_tablas, 'asiento_secuencia') loop
+    perform t.ok(t.cuenta('select count(*) from public.' || v_tab) = 0, 'la recepcionista no lee ' || v_tab);
+  end loop;
+  perform t.ok(t.cuenta('select count(*) from public.facturas') > 0, 'la recepcionista si lee facturas (modulo operativo)');
+  perform t.ok(t.cuenta('select count(*) from public.fn_rep_cxc()') = 0
+               and t.cuenta('select count(*) from public.fn_rep_cxp()') = 0
+               and t.cuenta('select count(*) from public.fn_rep_resultado(date ''2020-01-01'', date ''2099-12-31'')') = 0
+               and t.cuenta('select count(*) from public.fn_rep_flujo_fondos(date ''2020-01-01'', date ''2099-12-31'')') = 0
+               and t.cuenta('select count(*) from public.fn_rep_libro_iva(extract(year from now())::int)') = 0,
+               'la recepcionista no obtiene filas de ningun reporte de finanzas');
+  perform t.falla('insert into public.proveedores (nombre) values (''Rec'')', '42501', 'la recepcionista no crea proveedores');
+  perform t.falla(format('insert into public.gastos (fk_categoria, gravado_10, condicion, fk_cuenta_fondo) values (%s, 1000, ''contado'', %s)', v_cat_a, v_fcaja_a),
+                  '42501', 'la recepcionista no registra gastos');
+  perform t.falla('select public.fn_cerrar_mes(2026, 2)', '42501', 'la recepcionista no cierra meses');
+  perform t.volver();
+
+  perform t.actuar(t.g('a_lim'), v_ta);
+  foreach v_tab in array array_remove(v_tablas, 'asiento_secuencia') loop
+    perform t.ok(t.cuenta('select count(*) from public.' || v_tab) = 0, 'el limpiador no lee ' || v_tab);
+  end loop;
+  perform t.ok(t.cuenta('select count(*) from public.fn_rep_cxc()') = 0
+               and t.cuenta('select count(*) from public.fn_rep_resultado(date ''2020-01-01'', date ''2099-12-31'')') = 0,
+               'el limpiador no obtiene filas de los reportes');
+  perform t.volver();
+
+  -- El gerente de A lee como el admin.
+  perform t.actuar(t.g('a_ger'), v_ta);
+  perform t.ok(t.cuenta('select count(*) from public.gastos') = 2 and t.cuenta('select count(*) from public.fn_rep_cxc()') = 1,
+               'el gerente de A lee gastos y reportes de su hotel');
+  perform t.volver();
+
+  -- anon no entra a ninguna tabla ni reporte.
+  perform t.anonimo();
+  foreach v_tab in array v_tablas loop
+    perform t.falla('select count(*) from public.' || v_tab, '42501', 'anon no lee ' || v_tab);
+  end loop;
+  perform t.falla('select * from public.fn_rep_cxc()', '42501', 'anon no ejecuta los reportes de finanzas');
+  perform t.falla('select public.fn_cerrar_mes(2026, 1)', '42501', 'anon no cierra meses');
   perform t.volver();
 end $$;
 
