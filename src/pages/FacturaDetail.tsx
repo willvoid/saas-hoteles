@@ -4,15 +4,23 @@ import { ModuleLayout } from '../components/ModuleLayout';
 import { Modal } from '../components/Modal';
 import TicketImprimible from '../components/TicketImprimible';
 import { facturaService } from '../services/facturaService';
+import { cobroService } from '../services/cobroService';
 import { getTransitionCopy, canTransition } from '../utils/facturaEstado';
 import { formatGs } from '../utils/currency';
-import type { MotivoItem, TicketData } from '../types/factura';
+import { canAccessFinanzas, type Role } from '../utils/permissions';
+import { etiquetaCondicion, mensajeDeError } from '../utils/facturaCredito';
+import { CONDICION_VENTA_CREDITO, type MotivoItem, type TicketData } from '../types/factura';
+import type { CobroListado } from '../types/finanzas';
+import type { TenantModulos } from '../services/tenantService';
 import '../index.css';
 import { COLORS, tint } from '../constants/colors';
 
 interface FacturaDetailProps {
   facturaId: number;
   onBack: () => void;
+  /** Receptionists see the sale condition but never balances or cobros. */
+  role: Role;
+  modulos?: TenantModulos;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -27,8 +35,24 @@ const ESTADO_COLOR: Record<string, string> = {
   ANULADA: COLORS.error,
 };
 
-export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps) {
-  const [factura, setFactura] = useState<any>(null);
+// The embedded detalle_factura rows are not described by the generated types.
+interface LineaDetalle {
+  id_detalle: number;
+  descripcion: string | null;
+  cantidad: number;
+  monto: number;
+  subtotal: number;
+  iva_aplicado: number;
+  estado: string;
+  concepto?: { nombre: string } | null;
+}
+
+type FacturaConDetalle = Awaited<ReturnType<typeof facturaService.getFacturaById>>;
+
+export default function FacturaDetail({ facturaId, onBack, role, modulos }: FacturaDetailProps) {
+  const verFinanzas = canAccessFinanzas(role, modulos ?? { contabilidad: false });
+  const [factura, setFactura] = useState<FacturaConDetalle | null>(null);
+  const [cobros, setCobros] = useState<CobroListado[]>([]);
   const [motivos, setMotivos] = useState<MotivoItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +60,8 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
   const [anularOpen, setAnularOpen] = useState(false);
   const [motivoSel, setMotivoSel] = useState<number | ''>('');
   const [anulando, setAnulando] = useState(false);
+  // Shown inside the modal: the page banner sits behind it.
+  const [anularError, setAnularError] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
 
   const load = async () => {
@@ -46,10 +72,16 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
         facturaService.getReferencias(),
       ]);
       setFactura(data);
+      // Cobros are admin/gerente only (RLS also closes them to other roles).
+      if (verFinanzas && data.condicion_venta === CONDICION_VENTA_CREDITO) {
+        setCobros(await cobroService.getCobrosPorFactura(facturaId));
+      } else {
+        setCobros([]);
+      }
       setMotivos(refs.motivos as unknown as MotivoItem[]);
       if (refs.motivos.length > 0) setMotivoSel((prev) => prev || refs.motivos[0].id_motivos);
-    } catch (err: any) {
-      setError(err.message || 'Error al cargar la factura.');
+    } catch (err: unknown) {
+      setError(mensajeDeError(err, 'Error al cargar la factura.'));
     } finally {
       setLoading(false);
     }
@@ -65,13 +97,15 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
       setError('Elegí un motivo de anulación.');
       return;
     }
+    setAnularError(null);
     try {
       setAnulando(true);
       await facturaService.anularFactura(facturaId, Number(motivoSel));
       setAnularOpen(false);
       await load();
-    } catch (err: any) {
-      setError(err.message || 'No se pudo anular la factura.');
+    } catch (err: unknown) {
+      // Includes the database message when the invoice still has active cobros.
+      setAnularError(mensajeDeError(err, 'No se pudo anular la factura.'));
     } finally {
       setAnulando(false);
     }
@@ -99,9 +133,10 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
     );
   }
 
+  const esCredito = factura.condicion_venta === CONDICION_VENTA_CREDITO;
   const puedeAnular = canTransition(factura.estado, 'ANULADA');
   const copy = getTransitionCopy('ANULADA');
-  const detalle = (factura.detalle_factura || []).filter((d: any) => d.estado !== 'INACTIVO');
+  const detalle = ((factura.detalle_factura ?? []) as LineaDetalle[]).filter((d) => d.estado !== 'INACTIVO');
 
   const ticketData: TicketData = {
     establecimiento: factura.establecimiento,
@@ -109,9 +144,10 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
     fechaEmision: factura.fecha_emision,
     clienteNombre: factura.cliente?.razon_social || 'Consumidor final',
     clienteDocumento: factura.cliente?.documento,
-    modoPago: factura.modo_pago?.descripcion,
+    // The ticket prints this under "Pago:"; a credit sale has no payment method.
+    modoPago: esCredito ? 'Crédito' : factura.modo_pago?.descripcion,
     estado: factura.estado,
-    lineas: detalle.map((d: any) => ({
+    lineas: detalle.map((d) => ({
       id_detalle: d.id_detalle,
       descripcion: d.descripcion || d.concepto?.nombre || 'Consumo',
       cantidad: Number(d.cantidad),
@@ -137,7 +173,7 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
         <button
           className="btn-ghost"
           style={{ color: COLORS.error, borderColor: tint('error', 0.4), display: 'inline-flex', alignItems: 'center', gap: 8 }}
-          onClick={() => setAnularOpen(true)}
+          onClick={() => { setAnularError(null); setAnularOpen(true); }}
         >
           <Ban size={16} /> Anular
         </button>
@@ -168,8 +204,26 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
             <dd style={{ margin: 0 }}>{factura.cliente?.documento || '—'}</dd>
             <dt style={{ color: 'var(--text-secondary)' }}>Fecha</dt>
             <dd style={{ margin: 0 }}>{new Date(factura.fecha_emision).toLocaleString()}</dd>
-            <dt style={{ color: 'var(--text-secondary)' }}>Modo de pago</dt>
-            <dd style={{ margin: 0 }}>{factura.modo_pago?.descripcion || '—'}</dd>
+            <dt style={{ color: 'var(--text-secondary)' }}>Condición de venta</dt>
+            <dd style={{ margin: 0 }}>{etiquetaCondicion(factura.condicion_venta)}</dd>
+            {!esCredito && (
+              <>
+                <dt style={{ color: 'var(--text-secondary)' }}>Modo de pago</dt>
+                <dd style={{ margin: 0 }}>{factura.modo_pago?.descripcion || '—'}</dd>
+              </>
+            )}
+            {esCredito && verFinanzas && (
+              <>
+                <dt style={{ color: 'var(--text-secondary)' }}>Vencimiento</dt>
+                <dd style={{ margin: 0 }}>
+                  {factura.fecha_vencimiento
+                    ? new Date(`${factura.fecha_vencimiento}T00:00:00`).toLocaleDateString()
+                    : '—'}
+                </dd>
+                <dt style={{ color: 'var(--text-secondary)' }}>Saldo pendiente</dt>
+                <dd style={{ margin: 0, fontWeight: 600 }}>{formatGs(Number(factura.saldo_pendiente ?? 0))}</dd>
+              </>
+            )}
             {factura.fk_folio && (
               <>
                 <dt style={{ color: 'var(--text-secondary)' }}>Folio</dt>
@@ -199,7 +253,7 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
                 </tr>
               </thead>
               <tbody>
-                {detalle.map((d: any) => (
+                {detalle.map((d) => (
                   <tr key={d.id_detalle} style={{ borderTop: '1px solid var(--glass-border)' }}>
                     <td style={{ padding: '8px 8px' }}>{d.descripcion || d.concepto?.nombre}</td>
                     <td style={{ padding: '8px 8px' }}>{Number(d.iva_aplicado) === 0 ? 'Exenta' : `${d.iva_aplicado}%`}</td>
@@ -212,6 +266,38 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
             </table>
           </div>
         </div>
+
+        {esCredito && verFinanzas && (
+          <div style={panelStyle}>
+            <h3 className="section-title" style={{ marginTop: 0 }}>Cobros</h3>
+            {cobros.length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Todavía no se registraron cobros.</p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: 13 }}>
+                      <th style={{ padding: '8px 8px' }}>Fecha</th>
+                      <th style={{ padding: '8px 8px' }}>Fondo</th>
+                      <th style={{ padding: '8px 8px' }}>Estado</th>
+                      <th style={{ padding: '8px 8px', textAlign: 'right' }}>Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cobros.map((c) => (
+                      <tr key={c.id} style={{ borderTop: '1px solid var(--glass-border)' }}>
+                        <td style={{ padding: '8px 8px' }}>{new Date(`${c.fecha}T00:00:00`).toLocaleDateString()}</td>
+                        <td style={{ padding: '8px 8px' }}>{c.fondo?.nombre || '—'}</td>
+                        <td style={{ padding: '8px 8px' }}>{c.estado === 'ANULADO' ? 'Anulado' : 'Registrado'}</td>
+                        <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600 }}>{formatGs(c.monto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ ...panelStyle, maxWidth: 360, alignSelf: 'flex-end', width: '100%' }}>
           <dl style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px 16px', margin: 0 }}>
@@ -264,6 +350,7 @@ export default function FacturaDetail({ facturaId, onBack }: FacturaDetailProps)
           </div>
         }
       >
+        {anularError && <div className="status-message status-error" style={{ marginBottom: 16 }}>{anularError}</div>}
         <p style={{ margin: '0 0 16px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>{copy.message}</p>
         <div className="input-group" style={{ marginBottom: 0 }}>
           <label htmlFor="motivo">Motivo</label>

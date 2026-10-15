@@ -5,13 +5,19 @@ import { DataTable, Column } from '../components/DataTable';
 import { ModuleLayout } from '../components/ModuleLayout';
 import { FilterChips, ChipOption } from '../components/FilterChips';
 import { formatGs } from '../utils/currency';
-import type { FacturaListItem } from '../types/factura';
+import { canAccessFinanzas, type Role } from '../utils/permissions';
+import { esPendiente, etiquetaCondicion, mensajeDeError } from '../utils/facturaCredito';
+import { CONDICION_VENTA_CREDITO, type FacturaListItem } from '../types/factura';
+import type { TenantModulos } from '../services/tenantService';
 import '../index.css';
 import { COLORS } from '../constants/colors';
 
 interface ManageFacturasProps {
   onNewFactura: () => void;
   onViewFactura: (id: number) => void;
+  /** Only admin/gerente with the `contabilidad` module see the receivable filter and balances. */
+  role: Role;
+  modulos?: TenantModulos;
 }
 
 const ESTADO_COLOR: Record<string, string> = {
@@ -24,8 +30,10 @@ const chips: ChipOption<string>[] = [
   { value: 'EMITIDA', label: 'Emitidas' },
   { value: 'ANULADA', label: 'Anuladas' },
 ];
+const chipPendientes: ChipOption<string> = { value: 'pendientes', label: 'Pendientes de cobro' };
 
-export default function ManageFacturas({ onNewFactura, onViewFactura }: ManageFacturasProps) {
+export default function ManageFacturas({ onNewFactura, onViewFactura, role, modulos }: ManageFacturasProps) {
+  const verFinanzas = canAccessFinanzas(role, modulos ?? { contabilidad: false });
   const [facturas, setFacturas] = useState<FacturaListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -38,8 +46,8 @@ export default function ManageFacturas({ onNewFactura, onViewFactura }: ManageFa
         setLoading(true);
         const data = await facturaService.getFacturas();
         setFacturas((data || []) as unknown as FacturaListItem[]);
-      } catch (err: any) {
-        setError(err.message || 'Error al cargar las facturas.');
+      } catch (err: unknown) {
+        setError(mensajeDeError(err, 'Error al cargar las facturas.'));
       } finally {
         setLoading(false);
       }
@@ -47,7 +55,11 @@ export default function ManageFacturas({ onNewFactura, onViewFactura }: ManageFa
   }, []);
 
   const filtered = facturas.filter((f) => {
-    if (filtro !== 'todas' && f.estado !== filtro) return false;
+    if (filtro === 'pendientes') {
+      if (!esPendiente(f)) return false;
+    } else if (filtro !== 'todas' && f.estado !== filtro) {
+      return false;
+    }
     if (!searchText) return true;
     const s = searchText.toLowerCase();
     const cliente = f.cliente?.razon_social || '';
@@ -62,7 +74,28 @@ export default function ManageFacturas({ onNewFactura, onViewFactura }: ManageFa
     { header: 'Nº', render: (f) => <span style={{ fontWeight: 600 }}>#{f.nro_secuencial}</span> },
     { header: 'Cliente', render: (f) => f.cliente?.razon_social || 'Consumidor final' },
     { header: 'Fecha', render: (f) => <span style={{ color: 'var(--text-secondary)' }}>{new Date(f.fecha_emision).toLocaleString()}</span> },
+    {
+      header: 'Condición',
+      render: (f) => (
+        <span
+          className="status-badge"
+          style={{ '--badge-color': f.condicion_venta === CONDICION_VENTA_CREDITO ? COLORS.warning : COLORS.textSecondary } as React.CSSProperties}
+        >
+          {etiquetaCondicion(f.condicion_venta)}
+        </span>
+      ),
+    },
     { header: 'Total', align: 'right', render: (f) => <span style={{ fontWeight: 600, color: COLORS.successLight }}>{formatGs(f.total_general)}</span> },
+    ...(verFinanzas
+      ? [{
+          header: 'Saldo',
+          align: 'right' as const,
+          render: (f: FacturaListItem) =>
+            f.condicion_venta === CONDICION_VENTA_CREDITO && f.estado === 'EMITIDA'
+              ? formatGs(Number(f.saldo_pendiente ?? 0))
+              : '—',
+        }]
+      : []),
     {
       header: 'Estado',
       render: (f) => (
@@ -103,7 +136,7 @@ export default function ManageFacturas({ onNewFactura, onViewFactura }: ManageFa
             className="search-input"
           />
         </div>
-        <FilterChips options={chips} value={filtro} onChange={setFiltro} />
+        <FilterChips options={verFinanzas ? [...chips, chipPendientes] : chips} value={filtro} onChange={setFiltro} />
       </div>
 
       {error && <div className="status-message status-error" style={{ marginBottom: 20 }}>{error}</div>}

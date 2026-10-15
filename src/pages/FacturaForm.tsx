@@ -11,10 +11,25 @@ import { cajaService } from '../services/cajaService';
 import { facturaService } from '../services/facturaService';
 import { folioService } from '../services/folioService';
 import { calcularTotales, calcularVuelto } from '../utils/facturaTotals';
+import {
+  mensajeDeError,
+  puedeFacturarACredito,
+  validarVencimiento,
+} from '../utils/facturaCredito';
+import { fechaNegocioHoy } from '../utils/periodoContable';
 import { esCargoDeAlojamiento } from '../utils/alojamiento';
 import { formatGs } from '../utils/currency';
 import { enfocarPrimerError } from '../utils/formFocus';
-import type { LineaFactura, Turno, ConceptoConIva, ModoPagoItem, FolioCerradoItem } from '../types/factura';
+import {
+  CONDICION_VENTA_CONTADO,
+  CONDICION_VENTA_CREDITO,
+  type LineaFactura,
+  type Turno,
+  type ConceptoConIva,
+  type ModoPagoItem,
+  type FolioCerradoItem,
+} from '../types/factura';
+import type { TenantModulos } from '../services/tenantService';
 import '../index.css';
 import { COLORS, tint } from '../constants/colors';
 
@@ -37,6 +52,8 @@ interface FacturaFormProps {
   onGoToCaja: () => void;
   /** Cuando viene de un folio (check-out), las líneas se precargan de los cargos y no hay selector. */
   fkFolio?: number | null;
+  /** Plan modules of the hotel; credit sales need `contabilidad`. */
+  modulos?: TenantModulos;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -47,7 +64,7 @@ const panelStyle: React.CSSProperties = {
 };
 
 /** Orden en pantalla, para llevar el foco al primer campo que falle al emitir. */
-const ORDEN_CAMPOS = ['cliente', 'folio-selector', 'items', 'modo-pago', 'efectivo'] as const;
+const ORDEN_CAMPOS = ['cliente', 'folio-selector', 'items', 'modo-pago', 'efectivo', 'vencimiento'] as const;
 
 const errorEnCampo: React.CSSProperties = {
   color: COLORS.errorLight,
@@ -56,9 +73,10 @@ const errorEnCampo: React.CSSProperties = {
   display: 'block',
 };
 
-export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja, fkFolio }: FacturaFormProps) {
+export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja, fkFolio, modulos }: FacturaFormProps) {
   const userId = currentUser?.id_usuario || currentUser?.id || 0;
   const folioForzado = !!fkFolio;
+  const creditoHabilitado = !!modulos?.contabilidad;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -71,7 +89,7 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
   const [avisoItem, setAvisoItem] = useState<string | null>(null);
 
   const [turno, setTurno] = useState<Turno | null>(null);
-  const [clientes, setClientes] = useState<any[]>([]);
+  const [clientes, setClientes] = useState<Awaited<ReturnType<typeof ClientService.getClients>>>([]);
   const [conceptos, setConceptos] = useState<ConceptoConIva[]>([]);
   const [modosPago, setModosPago] = useState<ModoPagoItem[]>([]);
 
@@ -90,6 +108,9 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
   const [fkModoPago, setFkModoPago] = useState<number | ''>('');
   const [lineas, setLineas] = useState<LineaFactura[]>([]);
   const [efectivo, setEfectivo] = useState('');
+  // Contado by default; Crédito is only offered when the plan has `contabilidad`.
+  const [condicion, setCondicion] = useState<number>(CONDICION_VENTA_CONTADO);
+  const [fechaVencimiento, setFechaVencimiento] = useState('');
   const [conceptoSel, setConceptoSel] = useState<number | ''>('');
   // Cambia en cada alta de línea para remontar el buscador y limpiar el texto
   // tipeado (el propio componente sólo se sincroniza cuando `value` cambia,
@@ -128,7 +149,7 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
       folioService.getFolioById(idFolio),
     ]);
     setLineas(
-      cargos.map((c: any) => ({
+      cargos.map((c) => ({
         fk_concepto: c.fk_concepto,
         descripcion: c.concepto?.nombre || 'Consumo',
         cantidad: Number(c.cantidad),
@@ -139,7 +160,7 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
     );
     setCargosOriginales(
       Object.fromEntries(
-        cargos.map((c: any) => [
+        cargos.map((c) => [
           c.id_cargo,
           {
             fk_concepto: Number(c.fk_concepto),
@@ -151,7 +172,7 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
       ),
     );
     setCargosAQuitar([]);
-    const cliente = (folio as any)?.reserva?.fk_cliente ?? (folio as any)?.reserva?.cliente?.id_cliente;
+    const cliente = folio?.reserva?.fk_cliente ?? folio?.reserva?.cliente?.id_cliente;
     if (cliente) setFkCliente(cliente);
   };
 
@@ -177,8 +198,8 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
         if (fkFolio) {
           await cargarLineasDeFolio(fkFolio);
         }
-      } catch (err: any) {
-        setError(err.message || 'Error al cargar el formulario.');
+      } catch (err: unknown) {
+        setError(mensajeDeError(err, 'Error al cargar el formulario.'));
       } finally {
         setLoading(false);
       }
@@ -197,8 +218,8 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
         setCargandoClientesConFolios(true);
         const ids = await folioService.getClientesConFoliosCerrados();
         if (!cancelado) setClientesConFolios(ids);
-      } catch (err: any) {
-        if (!cancelado) setError(err.message || 'No se pudieron cargar los clientes con folios cerrados.');
+      } catch (err: unknown) {
+        if (!cancelado) setError(mensajeDeError(err, 'No se pudieron cargar los clientes con folios cerrados.'));
       } finally {
         if (!cancelado) setCargandoClientesConFolios(false);
       }
@@ -224,8 +245,8 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
         setCargandoFoliosCerrados(true);
         const folios = await folioService.getFoliosCerradosPorCliente(Number(fkCliente));
         if (!cancelado) setFoliosCerrados((folios || []) as unknown as FolioCerradoItem[]);
-      } catch (err: any) {
-        if (!cancelado) setError(err.message || 'No se pudieron cargar los folios del cliente.');
+      } catch (err: unknown) {
+        if (!cancelado) setError(mensajeDeError(err, 'No se pudieron cargar los folios del cliente.'));
       } finally {
         if (!cancelado) setCargandoFoliosCerrados(false);
       }
@@ -255,8 +276,8 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
     try {
       setCargandoFolio(true);
       await cargarLineasDeFolio(Number(idFolio));
-    } catch (err: any) {
-      setError(err.message || 'No se pudo cargar el folio.');
+    } catch (err: unknown) {
+      setError(mensajeDeError(err, 'No se pudo cargar el folio.'));
     } finally {
       setCargandoFolio(false);
     }
@@ -266,13 +287,17 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
   const clientesVisibles = useMemo(() => {
     if (folioForzado || origenManual !== 'folio' || clientesConFolios === null) return clientes;
     const permitidos = new Set(clientesConFolios);
-    return clientes.filter((c: any) => permitidos.has(Number(c.id_cliente)));
+    return clientes.filter((c) => permitidos.has(Number(c.id_cliente)));
   }, [clientes, clientesConFolios, folioForzado, origenManual]);
 
+  const esCredito = creditoHabilitado && condicion === CONDICION_VENTA_CREDITO;
+
+  // Credit collects nothing at issue, so cash/change never apply to it.
   const modoEsEfectivo = useMemo(() => {
+    if (esCredito) return false;
     const modo = modosPago.find((m) => m.id_modo_pago === fkModoPago);
     return (modo?.descripcion || '').toLowerCase() === 'efectivo';
-  }, [modosPago, fkModoPago]);
+  }, [modosPago, fkModoPago, esCredito]);
 
   const totales = useMemo(() => calcularTotales(lineas), [lineas]);
 
@@ -511,6 +536,18 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
     setEfectivo('');
   };
 
+  const handleCondicionChange = (valor: number) => {
+    setError(null);
+    setFieldErrors((prev) => ({
+      ...prev,
+      'modo-pago': undefined,
+      efectivo: undefined,
+      vencimiento: undefined,
+    }));
+    setCondicion(valor);
+    if (valor === CONDICION_VENTA_CONTADO) setFechaVencimiento('');
+  };
+
   const handleSubmit = async () => {
     setError(null);
     if (!turno) {
@@ -528,7 +565,15 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
     } else if (lineas.some((l) => !l.cantidad || l.cantidad <= 0)) {
       errores.items = 'Todas las líneas deben tener una cantidad mayor a cero.';
     }
-    if (!fkModoPago) errores['modo-pago'] = 'Elegí un modo de pago.';
+    if (esCredito) {
+      if (!puedeFacturarACredito({ modulos: { contabilidad: creditoHabilitado }, cliente: fkCliente })) {
+        errores.cliente = 'La venta a crédito requiere un cliente identificado.';
+      }
+      const errorVencimiento = validarVencimiento(fechaNegocioHoy(), fechaVencimiento);
+      if (errorVencimiento) errores.vencimiento = errorVencimiento;
+    } else if (!fkModoPago) {
+      errores['modo-pago'] = 'Elegí un modo de pago.';
+    }
     if (modoEsEfectivo) {
       if (!efectivo) {
         errores.efectivo = 'Ingresá el efectivo recibido.';
@@ -553,15 +598,17 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
       const factura = await facturaService.crearFactura({
         fk_cliente: Number(fkCliente),
         fk_folio: folioActivo ?? null,
-        fk_modo_pago: Number(fkModoPago),
+        fk_modo_pago: esCredito ? null : Number(fkModoPago),
         fk_turno: turno.id_turno,
         esEfectivo: modoEsEfectivo,
         efectivo: Number(efectivo) || 0,
+        condicion_venta: esCredito ? CONDICION_VENTA_CREDITO : CONDICION_VENTA_CONTADO,
+        fecha_vencimiento: esCredito ? fechaVencimiento || null : null,
         lineas: lineasAFacturar,
       });
       onCreated(factura.id_factura);
-    } catch (err: any) {
-      setError(err.message || 'No se pudo emitir la factura.');
+    } catch (err: unknown) {
+      setError(mensajeDeError(err, 'No se pudo emitir la factura.'));
     } finally {
       setSaving(false);
     }
@@ -799,6 +846,48 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
           <div style={{ ...panelStyle, flex: '1 1 280px' }}>
             <h3 className="section-title" style={{ marginTop: 0 }}>Pago</h3>
+            {creditoHabilitado && (
+              <div className="input-group">
+                <label>Condición de venta</label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    className={!esCredito ? 'btn-primary-sm' : 'btn-ghost'}
+                    onClick={() => handleCondicionChange(CONDICION_VENTA_CONTADO)}
+                  >
+                    Contado
+                  </button>
+                  <button
+                    type="button"
+                    className={esCredito ? 'btn-primary-sm' : 'btn-ghost'}
+                    onClick={() => handleCondicionChange(CONDICION_VENTA_CREDITO)}
+                  >
+                    Crédito
+                  </button>
+                </div>
+              </div>
+            )}
+            {esCredito && (
+              <div className="input-group">
+                <label htmlFor="vencimiento">Vencimiento (opcional)</label>
+                <input
+                  id="vencimiento"
+                  type="date"
+                  className={`input-field ${fieldErrors.vencimiento ? 'input-error' : ''}`}
+                  value={fechaVencimiento}
+                  min={fechaNegocioHoy()}
+                  onChange={(e) => {
+                    setFechaVencimiento(e.target.value);
+                    setFieldErrors((prev) => ({ ...prev, vencimiento: undefined }));
+                  }}
+                />
+                {fieldErrors.vencimiento && <span style={errorEnCampo}>{fieldErrors.vencimiento}</span>}
+                <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 8 }}>
+                  La factura queda con saldo pendiente hasta que se registren los cobros.
+                </p>
+              </div>
+            )}
+            {!esCredito && (
             <div className="input-group">
               <label htmlFor="modo-pago">Modo de pago</label>
               <select
@@ -813,6 +902,7 @@ export default function FacturaForm({ currentUser, onBack, onCreated, onGoToCaja
               </select>
               {fieldErrors['modo-pago'] && <span style={errorEnCampo}>{fieldErrors['modo-pago']}</span>}
             </div>
+            )}
             {modoEsEfectivo && (
               <div className="input-group">
                 <label htmlFor="efectivo">Efectivo recibido *</label>

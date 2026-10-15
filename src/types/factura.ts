@@ -27,6 +27,10 @@ export interface FacturaListItem {
   fecha_emision: string;
   total_general: number;
   estado: string;
+  /** 1 = contado, 2 = crédito (see CONDICION_VENTA_*). */
+  condicion_venta: number | null;
+  fecha_vencimiento: string | null;
+  saldo_pendiente: number | null;
   cliente?: { razon_social: string; documento: string } | null;
 }
 

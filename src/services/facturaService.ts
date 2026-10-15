@@ -2,10 +2,14 @@ import { supabase } from './supabaseClient';
 import { folioService } from './folioService';
 import { calcularTotales, calcularVuelto } from '../utils/facturaTotals';
 import { canTransition } from '../utils/facturaEstado';
-import type { Factura, LineaFactura } from '../types/factura';
+import {
+  CONDICION_VENTA_CONTADO,
+  CONDICION_VENTA_CREDITO,
+  type Factura,
+  type LineaFactura,
+} from '../types/factura';
 
-// Valores fijos de esta versión (ticket interno contado, sin Sifen).
-const CONDICION_VENTA_CONTADO = 1;
+// Valor fijo de esta versión (ticket interno, sin Sifen).
 const TIPO_EMISION_NORMAL = 1;
 
 export interface FacturacionDefaults {
@@ -21,10 +25,15 @@ export interface FacturacionDefaults {
 export interface CrearFacturaInput {
   fk_cliente: number;
   fk_folio?: number | null;
-  fk_modo_pago: number;
+  /** Null only for credit invoices (the database rejects it for contado). */
+  fk_modo_pago: number | null;
   fk_turno: number;
   esEfectivo: boolean;
   efectivo?: number;
+  /** Defaults to contado. Credit needs the `contabilidad` module (enforced in the DB). */
+  condicion_venta?: typeof CONDICION_VENTA_CONTADO | typeof CONDICION_VENTA_CREDITO;
+  /** Optional due date (YYYY-MM-DD); only sent for credit invoices. */
+  fecha_vencimiento?: string | null;
   observacion?: string;
   lineas: LineaFactura[];
 }
@@ -141,10 +150,15 @@ export const facturaService = {
     const defaults = await this.getFacturacionDefaults();
     const totales = calcularTotales(input.lineas);
 
-    const efectivo = input.esEfectivo
-      ? Number(input.efectivo ?? totales.total_general)
-      : totales.total_general;
-    const vuelto = input.esEfectivo
+    const esCredito = input.condicion_venta === CONDICION_VENTA_CREDITO;
+
+    // Credit collects nothing at issue: no cash received, no change.
+    const efectivo = esCredito
+      ? 0
+      : input.esEfectivo
+        ? Number(input.efectivo ?? totales.total_general)
+        : totales.total_general;
+    const vuelto = !esCredito && input.esEfectivo
       ? calcularVuelto(efectivo, totales.total_general)
       : 0;
 
@@ -158,14 +172,15 @@ export const facturaService = {
       .insert({
         fk_cliente: input.fk_cliente,
         fk_folio: input.fk_folio ?? null,
-        fk_modo_pago: input.fk_modo_pago,
+        fk_modo_pago: esCredito ? null : input.fk_modo_pago,
         fk_turno: input.fk_turno,
         fk_establecimientos: defaults.fk_establecimientos,
         fk_monedas: defaults.fk_monedas,
         fk_tipo_factura: defaults.fk_tipo_factura,
         fk_inmueble: defaults.fk_inmueble,
         nro_secuencial,
-        condicion_venta: CONDICION_VENTA_CONTADO,
+        condicion_venta: esCredito ? CONDICION_VENTA_CREDITO : CONDICION_VENTA_CONTADO,
+        ...(esCredito ? { fecha_vencimiento: input.fecha_vencimiento || null } : {}),
         tipo_emision: TIPO_EMISION_NORMAL,
         estado: 'EMITIDA',
         observacion: input.observacion ?? '',

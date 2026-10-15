@@ -797,11 +797,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
               <FacturaDetail
                 facturaId={viewingFacturaId}
                 onBack={() => setViewingFacturaId(null)}
+                role={role}
+                modulos={user.tenant?.modulos}
               />
             ) : isAddingFactura ? (
               <FacturaForm
                 currentUser={user}
                 fkFolio={facturaFolioSeed}
+                modulos={user.tenant?.modulos}
                 onBack={() => { setIsAddingFactura(false); setFacturaFolioSeed(null); }}
                 onCreated={(id: number) => {
                   setIsAddingFactura(false);
@@ -819,6 +822,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
               <ManageFacturas
                 onNewFactura={() => setIsAddingFactura(true)}
                 onViewFactura={(id: number) => setViewingFacturaId(id)}
+                role={role}
+                modulos={user.tenant?.modulos}
               />
             )}
           </div>
