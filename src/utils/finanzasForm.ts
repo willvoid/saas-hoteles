@@ -1,7 +1,7 @@
 import { validarVencimiento } from './facturaCredito';
 import { formatGs } from './currency';
-import { estaCerrado } from './periodoContable';
-import type { CondicionGasto, GastoNuevo, Periodo, TipoFondo } from '../types/finanzas';
+import { esMesFuturo, estaCerrado, etiquetaPeriodo } from './periodoContable';
+import type { CondicionGasto, GastoNuevo, Periodo, PeriodoCerrado, TipoFondo } from '../types/finanzas';
 
 /** Spanish label of each fund type. */
 export const ETIQUETA_TIPO_FONDO: Record<TipoFondo, string> = {
@@ -186,5 +186,92 @@ export function validarProveedorForm(valores: ProveedorFormValores): ErroresForm
   return soloConError({
     nombre: valores.nombre.trim() ? undefined : 'El nombre es obligatorio.',
     email: email && !EMAIL.test(email) ? 'El email no es válido.' : undefined,
+  });
+}
+
+// ─── Cobros ──────────────────────────────────────────────────────────────────
+export interface CobroFormValores {
+  fk_factura: number | '';
+  fk_cuenta_fondo: number | '';
+  monto: string;
+  fecha: string;
+}
+
+/** `saldo` is the balance of the chosen invoice (null while none is chosen).
+ *  The amount has to be between 1 and that balance. */
+export function validarCobroForm(
+  valores: CobroFormValores,
+  saldo: number | null,
+  periodos: Periodo[],
+): ErroresForm {
+  const monto = parseMonto(valores.monto);
+  let errorMonto: string | undefined;
+  if (monto <= 0) errorMonto = 'Ingresá un monto mayor a cero.';
+  else if (saldo !== null && monto > saldo) {
+    errorMonto = `El monto no puede superar el saldo (${formatGs(saldo)}).`;
+  }
+  return soloConError({
+    fk_factura: valores.fk_factura === '' ? 'Elegí la factura a cobrar.' : undefined,
+    fk_cuenta_fondo: valores.fk_cuenta_fondo === '' ? 'Elegí el fondo donde entra el cobro.' : undefined,
+    monto: errorMonto,
+    fecha: validarFecha(valores.fecha, periodos),
+  });
+}
+
+/** Lowercase text without accents, for tolerant comparisons. */
+function normalizarTexto(texto: string): string {
+  return texto.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+}
+
+/** Keeps the rows whose client name or document contains the text (case and
+ *  accent insensitive). A blank text keeps every row, including those without
+ *  client. */
+export function filtrarPorCliente<T extends { cliente: { razon_social: string; documento: string } | null }>(
+  filas: T[],
+  texto: string,
+): T[] {
+  const buscado = normalizarTexto(texto);
+  if (!buscado) return filas;
+  return filas.filter((fila) => {
+    if (!fila.cliente) return false;
+    return (
+      normalizarTexto(fila.cliente.razon_social).includes(buscado) ||
+      normalizarTexto(fila.cliente.documento).includes(buscado)
+    );
+  });
+}
+
+// ─── Cierres ─────────────────────────────────────────────────────────────────
+export interface MesCierre {
+  anio: number;
+  mes: number;
+  etiqueta: string;
+  cerrado: boolean;
+  /** Timestamp of the closing; null while the month is open. */
+  cerradoEn: string | null;
+  /** User id that closed it; null while the month is open. */
+  cerradoPor: number | null;
+  /** The month starts after the current business month: it cannot be closed. */
+  futuro: boolean;
+}
+
+/** View model of the twelve months of a year for the closing panel. */
+export function mesesDelAnio(
+  anio: number,
+  periodos: Pick<PeriodoCerrado, 'anio' | 'mes' | 'cerrado_en' | 'cerrado_por'>[],
+  now: Date = new Date(),
+): MesCierre[] {
+  return Array.from({ length: 12 }, (_, i) => {
+    const mes = i + 1;
+    const cierre = periodos.find((p) => p.anio === anio && p.mes === mes);
+    return {
+      anio,
+      mes,
+      etiqueta: etiquetaPeriodo(anio, mes),
+      cerrado: !!cierre,
+      cerradoEn: cierre?.cerrado_en ?? null,
+      cerradoPor: cierre?.cerrado_por ?? null,
+      futuro: esMesFuturo(anio, mes, now),
+    };
   });
 }

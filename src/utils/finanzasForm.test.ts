@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   armarGastoNuevo,
+  filtrarPorCliente,
+  mesesDelAnio,
+  validarCobroForm,
   inicioDeAnio,
   parseMonto,
   rangoMesActual,
@@ -231,5 +234,88 @@ describe('validarProveedorForm', () => {
     const base = { nombre: 'ACME', ruc: '', telefono: '' };
     expect(validarProveedorForm({ ...base, email: 'no-es-mail' }).email).toBeTruthy();
     expect(validarProveedorForm({ ...base, email: 'ventas@acme.com.py' })).toEqual({});
+  });
+});
+
+describe('validarCobroForm', () => {
+  const cobro = { fk_factura: 7, fk_cuenta_fondo: 2, monto: '40000', fecha: '2026-03-10' };
+
+  it('accepts an amount from 1 up to the balance', () => {
+    expect(validarCobroForm(cobro, 100000, [])).toEqual({});
+    expect(validarCobroForm({ ...cobro, monto: '1' }, 100000, [])).toEqual({});
+    expect(validarCobroForm({ ...cobro, monto: '100000' }, 100000, [])).toEqual({});
+  });
+
+  it('rejects zero, empty and above-balance amounts', () => {
+    expect(validarCobroForm({ ...cobro, monto: '' }, 100000, []).monto).toBeTruthy();
+    expect(validarCobroForm({ ...cobro, monto: '0' }, 100000, []).monto).toBeTruthy();
+    expect(validarCobroForm({ ...cobro, monto: '100001' }, 100000, []).monto).toMatch(/saldo/i);
+  });
+
+  it('requires the invoice, the fund and the date', () => {
+    const errores = validarCobroForm({ ...cobro, fk_factura: '', fk_cuenta_fondo: '', fecha: '' }, null, []);
+    expect(errores.fk_factura).toBeTruthy();
+    expect(errores.fk_cuenta_fondo).toBeTruthy();
+    expect(errores.fecha).toBeTruthy();
+  });
+
+  it('flags a date inside a closed month', () => {
+    expect(validarCobroForm(cobro, 100000, [{ anio: 2026, mes: 3 }]).fecha).toMatch(/cerrado/i);
+  });
+});
+
+describe('filtrarPorCliente', () => {
+  const filas = [
+    { id: 1, cliente: { razon_social: 'Hotel Sol SA', documento: '800123-4' } },
+    { id: 2, cliente: { razon_social: 'María Gómez', documento: '4567890' } },
+    { id: 3, cliente: null },
+  ];
+
+  it('returns every row for a blank text', () => {
+    expect(filtrarPorCliente(filas, '')).toHaveLength(3);
+    expect(filtrarPorCliente(filas, '   ')).toHaveLength(3);
+  });
+
+  it('matches name or document, ignoring case and accents', () => {
+    expect(filtrarPorCliente(filas, 'sol').map((f) => f.id)).toEqual([1]);
+    expect(filtrarPorCliente(filas, 'MARIA gomez').map((f) => f.id)).toEqual([2]);
+    expect(filtrarPorCliente(filas, '4567').map((f) => f.id)).toEqual([2]);
+  });
+
+  it('drops rows without client when a text is given', () => {
+    expect(filtrarPorCliente(filas, 'zzz')).toEqual([]);
+  });
+});
+
+describe('mesesDelAnio', () => {
+  const ahora = new Date('2026-03-15T15:00:00Z');
+  const cerrados = [{ anio: 2026, mes: 1, cerrado_en: '2026-02-03T10:00:00Z', cerrado_por: 5 }];
+
+  it('always returns the twelve months in order with their label', () => {
+    const meses = mesesDelAnio(2026, cerrados, ahora);
+    expect(meses).toHaveLength(12);
+    expect(meses[0].etiqueta).toBe('Enero 2026');
+    expect(meses[11].etiqueta).toBe('Diciembre 2026');
+    expect(meses.map((m) => m.mes)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it('marks closed months with who and when, open ones without', () => {
+    const [enero, febrero] = mesesDelAnio(2026, cerrados, ahora);
+    expect(enero).toMatchObject({ cerrado: true, cerradoEn: '2026-02-03T10:00:00Z', cerradoPor: 5 });
+    expect(febrero).toMatchObject({ cerrado: false, cerradoEn: null, cerradoPor: null });
+  });
+
+  it('flags only the months after the current business month as future', () => {
+    const meses = mesesDelAnio(2026, [], ahora);
+    expect(meses.filter((m) => m.futuro).map((m) => m.mes)).toEqual([4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it('treats a whole past year as past and a whole future year as future', () => {
+    expect(mesesDelAnio(2025, [], ahora).some((m) => m.futuro)).toBe(false);
+    expect(mesesDelAnio(2027, [], ahora).every((m) => m.futuro)).toBe(true);
+  });
+
+  it('ignores closed periods of other years', () => {
+    expect(mesesDelAnio(2025, cerrados, ahora).some((m) => m.cerrado)).toBe(false);
   });
 });

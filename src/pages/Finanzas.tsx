@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import { ModuleLayout } from '../components/ModuleLayout';
+import CierresPanel from './finanzas/CierresPanel';
+import CobrosPanel from './finanzas/CobrosPanel';
 import FondosPanel from './finanzas/FondosPanel';
 import GastosPanel from './finanzas/GastosPanel';
 import PagosPanel from './finanzas/PagosPanel';
 import ProveedoresPanel from './finanzas/ProveedoresPanel';
+import type { Role } from '../utils/permissions';
 
 type FinanzasTabId =
   | 'resumen'
@@ -35,15 +38,20 @@ const panelStyle: CSSProperties = {
   color: 'var(--text-secondary)',
 };
 
-// Sub-tabs whose panel is not built yet (collections, summary, reports, closings).
-const PLACEHOLDER_TABS: FinanzasTabId[] = ['resumen', 'cobros', 'reportes', 'cierres'];
+// Sub-tabs whose panel is not built yet (summary, reports).
+const PLACEHOLDER_TABS: FinanzasTabId[] = ['resumen', 'reportes'];
+
+interface FinanzasProps {
+  /** Role of the signed-in user; only the admin can close or reopen months. */
+  role: Role;
+}
 
 // Shell for the finance module. Expenses, payments, suppliers and funds have
 // their panel; the other sub-tabs stay placeholders until their page lands.
 // Each panel mounts only while its tab is active, so it reloads fresh data.
 // The classes below are the same ones StatusTabs uses, minus its mandatory
 // "(count)" suffix, which makes no sense for static sections.
-export default function Finanzas() {
+export default function Finanzas({ role }: FinanzasProps) {
   const [tab, setTab] = useState<FinanzasTabId>('resumen');
   const current = SUB_TABS.find(t => t.key === tab) ?? SUB_TABS[0];
 
@@ -65,7 +73,9 @@ export default function Finanzas() {
       </div>
       <div style={{ marginTop: 20 }}>
         {tab === 'gastos' && <GastosPanel />}
+        {tab === 'cobros' && <CobrosPanel />}
         {tab === 'pagos' && <PagosPanel />}
+        {tab === 'cierres' && <CierresPanel role={role} />}
         {tab === 'proveedores' && <ProveedoresPanel />}
         {tab === 'fondos' && <FondosPanel />}
         {PLACEHOLDER_TABS.includes(tab) && (

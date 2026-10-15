@@ -54,7 +54,7 @@ import { Modal } from '../components/Modal';
 import { NotificationBell } from '../components/NotificationBell';
 import { useNotificaciones } from '../hooks/useNotificaciones';
 import { cajaService } from '../services/cajaService';
-import { dashboardService, HomeStats, OcupacionDia } from '../services/dashboardService';
+import { useHomeStats } from '../hooks/useHomeStats';
 import OccupancyChart from '../components/OccupancyChart';
 import { formatGs } from '../utils/currency';
 import { validarMontoTurno, validarTipeoMontoTurno } from '../utils/montoTurno';
@@ -130,18 +130,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
   // toca, así que ese botón no aparece ahí.
   const [reservationIdParaVolverDesdeFolio, setReservationIdParaVolverDesdeFolio] = useState<number | null>(null);
 
-  const [homeStats, setHomeStats] = useState<HomeStats | null>(null);
-  const [ocupacionSemana, setOcupacionSemana] = useState<OcupacionDia[] | null>(null);
-
-  useEffect(() => {
-    if (activeTab !== 'home') return;
-    dashboardService.getHomeStats()
-      .then(setHomeStats)
-      .catch((err) => console.error('Error cargando estadísticas de Home:', err));
-    dashboardService.getOcupacionUltimos7Dias()
-      .then(setOcupacionSemana)
-      .catch((err) => console.error('Error cargando ocupación semanal:', err));
-  }, [activeTab]);
+  const { homeStats, ocupacionSemana } = useHomeStats(activeTab === 'home');
 
   const userId = user.id_usuario || user.id || 0;
 
@@ -857,7 +846,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
 
         {activeTab === 'finanzas' && showFinanzas && (
           <div className="module-container">
-            <Finanzas />
+            <Finanzas role={role} />
           </div>
         )}
 
