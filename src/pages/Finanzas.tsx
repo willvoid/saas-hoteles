@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import { ModuleLayout } from '../components/ModuleLayout';
+import FondosPanel from './finanzas/FondosPanel';
+import GastosPanel from './finanzas/GastosPanel';
+import PagosPanel from './finanzas/PagosPanel';
+import ProveedoresPanel from './finanzas/ProveedoresPanel';
 
 type FinanzasTabId =
   | 'resumen'
@@ -31,8 +35,12 @@ const panelStyle: CSSProperties = {
   color: 'var(--text-secondary)',
 };
 
-// Shell for the finance module. Each sub-tab is a placeholder until its page
-// lands (suppliers, funds, expenses, collections, reports, month closing).
+// Sub-tabs whose panel is not built yet (collections, summary, reports, closings).
+const PLACEHOLDER_TABS: FinanzasTabId[] = ['resumen', 'cobros', 'reportes', 'cierres'];
+
+// Shell for the finance module. Expenses, payments, suppliers and funds have
+// their panel; the other sub-tabs stay placeholders until their page lands.
+// Each panel mounts only while its tab is active, so it reloads fresh data.
 // The classes below are the same ones StatusTabs uses, minus its mandatory
 // "(count)" suffix, which makes no sense for static sections.
 export default function Finanzas() {
@@ -55,8 +63,14 @@ export default function Finanzas() {
           </button>
         ))}
       </div>
-      <div style={{ ...panelStyle, marginTop: 20 }}>
-        {current.label}: en construcción.
+      <div style={{ marginTop: 20 }}>
+        {tab === 'gastos' && <GastosPanel />}
+        {tab === 'pagos' && <PagosPanel />}
+        {tab === 'proveedores' && <ProveedoresPanel />}
+        {tab === 'fondos' && <FondosPanel />}
+        {PLACEHOLDER_TABS.includes(tab) && (
+          <div style={panelStyle}>{current.label}: en construcción.</div>
+        )}
       </div>
     </ModuleLayout>
   );
