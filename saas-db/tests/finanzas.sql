@@ -1,0 +1,630 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Finance suite (double-entry accounting, 0016+)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Runs in one transaction that is rolled back at the end: it leaves nothing behind.
+--
+-- Requirements: migrations 0001-0016 (or whatever the sections cover) and
+-- supabase/seed.sql applied.
+--
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/finanzas.sql
+--
+-- Layout (so later tasks can append sections):
+--   1. `t.*` helpers (same as planes.sql, plus `falla_con`).
+--   2. Fixtures: hotels `pro` and `basico`, `pro` staff and a minimal chart of
+--      accounts loaded as superuser. Keys are stored with
+--      set_config('test.<key>') and read with t.g('<key>').
+--   3. One section per migration, each in its own `do $$` block:
+--        T1 (0016) accounting base  <- this one
+--        T2 (0017) chart of accounts and categories      (pending)
+--        T3 (0018) funds and credit invoices             (pending)
+--        T4 (0019) expenses, collections, payments, transfers (pending)
+--        T5 (0020) month lock                            (pending)
+--        T6 (0021) reports                               (pending)
+--      Each task inserts its section right BEFORE the `FIN` marker at the end.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+begin;
+
+create schema t;
+grant usage on schema t to public;
+
+create function t.ok(p_cond boolean, p_msg text) returns void language plpgsql as $$
+begin
+  if p_cond is not true then
+    raise exception 'FALLO: %', p_msg;
+  end if;
+  raise notice 'ok  - %', p_msg;
+end $$;
+
+-- Impersonates an authenticated user of a tenant.
+create function t.actuar(p_auth text, p_tenant bigint) returns void language plpgsql as $$
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', p_auth, 'role', 'authenticated',
+                      'app_metadata', json_build_object('tenant_id', p_tenant))::text, true);
+  execute 'set local role authenticated';
+end $$;
+
+create function t.anonimo() returns void language plpgsql as $$
+begin
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  execute 'set local role anon';
+end $$;
+
+create function t.volver() returns void language plpgsql as $$
+begin
+  execute 'reset role';
+  perform set_config('request.jwt.claims', '', true);
+end $$;
+
+-- The statement must fail with the given SQLSTATE.
+create function t.falla(p_sql text, p_estado text, p_msg text) returns void language plpgsql as $$
+declare v_fallo boolean := false;
+begin
+  begin
+    execute p_sql;
+  exception when others then
+    if sqlstate = p_estado then
+      v_fallo := true;
+    else
+      raise exception 'FALLO: % - se esperaba % y llego % (%)', p_msg, p_estado, sqlstate, sqlerrm;
+    end if;
+  end;
+  if not v_fallo then
+    raise exception 'FALLO: % - la sentencia no fallo', p_msg;
+  end if;
+  raise notice 'ok  - % (%)', p_msg, p_estado;
+end $$;
+
+-- Like falla, and the message must also contain a fragment.
+create function t.falla_con(p_sql text, p_estado text, p_fragmento text, p_msg text) returns void language plpgsql as $$
+declare v_fallo boolean := false;
+begin
+  begin
+    execute p_sql;
+  exception when others then
+    if sqlstate <> p_estado then
+      raise exception 'FALLO: % - se esperaba % y llego % (%)', p_msg, p_estado, sqlstate, sqlerrm;
+    end if;
+    if position(lower(p_fragmento) in lower(sqlerrm)) = 0 then
+      raise exception 'FALLO: % - el mensaje "%" no contiene "%"', p_msg, sqlerrm, p_fragmento;
+    end if;
+    v_fallo := true;
+  end;
+  if not v_fallo then
+    raise exception 'FALLO: % - la sentencia no fallo', p_msg;
+  end if;
+  raise notice 'ok  - % (%)', p_msg, p_estado;
+end $$;
+
+-- The DML statement must affect exactly p_esperadas rows.
+create function t.filas(p_sql text, p_esperadas bigint, p_msg text) returns void language plpgsql as $$
+declare n bigint;
+begin
+  execute p_sql;
+  get diagnostics n = row_count;
+  perform t.ok(n = p_esperadas, p_msg || ' (filas=' || n || ')');
+end $$;
+
+create function t.cuenta(p_sql text) returns bigint language plpgsql as $$
+declare n bigint;
+begin
+  execute p_sql into n;
+  return n;
+end $$;
+
+create function t.g(p_clave text) returns text language sql as $$
+  select current_setting('test.' || p_clave)
+$$;
+
+-- ─── Fixtures ────────────────────────────────────────────────────────────────
+-- `pro` (accounting module) and `basico` (without it). `pro` adds a gerente and
+-- a receptionist through handle_new_user.
+do $$
+declare
+  v_contrib bigint := (select min(id_tipo_contribuyente) from public.tipo_contribuyente);
+  v_regimen bigint := (select min(id_regimen) from public.tipo_regimen);
+  c_ger bigint := (select id_cargo from public.cargo where lower(cargo) = 'gerente' limit 1);
+  c_rec bigint := (select id_cargo from public.cargo where lower(cargo) = 'recepcionista' limit 1);
+  v_plan text; v_i int := 0; v_u uuid; v_res jsonb; v_t bigint; v_estab bigint;
+  v_ger uuid := gen_random_uuid(); v_rec uuid := gen_random_uuid();
+  v_tipo bigint; v_padre bigint;
+begin
+  foreach v_plan in array array['pro', 'basico'] loop
+    v_i := v_i + 1;
+    v_u := gen_random_uuid();
+    insert into auth.users (id, email) values (v_u, 'fin-' || v_plan || '@f.test');
+    v_res := public.fn_provision_tenant(jsonb_build_object(
+      'tenant', jsonb_build_object('nombre', 'Hotel fin ' || v_plan, 'slug', 'fin-' || v_plan),
+      'admin', jsonb_build_object('auth_id', v_u, 'nombre', 'Admin', 'documento', 'F' || v_i, 'fk_tipo_doc', 1),
+      'empresa', jsonb_build_object('ruc', '8200000' || v_i || '-1', 'razon_social', 'Hotel F',
+                                    'fk_contribuyente', v_contrib, 'fk_regimen', v_regimen),
+      'establecimiento', jsonb_build_object('direccion', 'Calle', 'fk_barrio', 1)));
+    v_t := (v_res ->> 'tenant_id')::bigint;
+    v_estab := (v_res ->> 'id_establecimiento')::bigint;
+    perform public.fn_activar_plan(v_t, v_plan, 'mensual', null, 'test-fin-' || v_plan);
+    perform set_config('test.' || v_plan, v_t::text, true);
+    perform set_config('test.' || v_plan || '_admin', v_u::text, true);
+    perform set_config('test.' || v_plan || '_estab', v_estab::text, true);
+  end loop;
+
+  v_t := t.g('pro')::bigint;
+  insert into auth.users (id, email, raw_app_meta_data, raw_user_meta_data) values
+    (v_ger, 'fin-ger@f.test', jsonb_build_object('tenant_id', v_t, 'fk_cargo', c_ger),
+       jsonb_build_object('nombre', 'Gerente', 'documento', 'F11', 'fk_tipo_doc', 1)),
+    (v_rec, 'fin-rec@f.test', jsonb_build_object('tenant_id', v_t, 'fk_cargo', c_rec),
+       jsonb_build_object('nombre', 'Recepcion', 'documento', 'F12', 'fk_tipo_doc', 1));
+  perform set_config('test.ger', v_ger::text, true);
+  perform set_config('test.rec', v_rec::text, true);
+
+  -- Minimal chart of accounts, as superuser (the real seed arrives in 0017).
+  insert into public.tipo_cuenta_contable (nombre) values ('Activo') returning id into v_tipo;
+  perform set_config('test.tipo', v_tipo::text, true);
+
+  foreach v_plan in array array['pro', 'basico'] loop
+    v_t := t.g(v_plan)::bigint;
+    insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable)
+      values (v_t, 'Activo', '1', v_tipo, false) returning id into v_padre;
+    insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable, fk_cuenta_padre, clave) values
+      (v_t, 'Caja',        '1.1.01', v_tipo, true, v_padre, 'CAJA'),
+      (v_t, 'Banco',       '1.1.02', v_tipo, true, v_padre, 'BANCO'),
+      (v_t, 'Ventas',      '4.1',    v_tipo, true, null,    'VENTAS'),
+      (v_t, 'IVA debito',  '2.1.02', v_tipo, true, null,    'IVA_DEBITO');
+    perform set_config('test.' || v_plan || '_padre', v_padre::text, true);
+  end loop;
+
+  insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable, clave, activo)
+    values (t.g('pro')::bigint, 'Cuenta inactiva', '9.9', v_tipo, true, 'INACTIVA', false);
+end $$;
+
+-- ═══ T1 · 0016 accounting base ═════════════════════════════════════════════
+
+-- ─── cuentas_contables structure ─────────────────────────────────────────
+do $$
+begin
+  perform t.ok((select data_type from information_schema.columns
+                where table_schema = 'public' and table_name = 'cuentas_contables'
+                  and column_name = 'fk_tipo_cuenta') = 'bigint',
+               'cuentas_contables.fk_tipo_cuenta es bigint');
+  perform t.ok(exists (select 1 from information_schema.columns
+                       where table_schema = 'public' and table_name = 'cuentas_contables'
+                         and column_name = 'clave'),
+               'cuentas_contables tiene clave');
+  perform t.ok((select column_default from information_schema.columns
+                where table_schema = 'public' and table_name = 'cuentas_contables'
+                  and column_name = 'activo') = 'true',
+               'cuentas_contables.activo existe y es true por defecto');
+
+  perform t.falla(format(
+    'insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable) values (%s, ''Dup'', ''1.1.01'', %s, true)',
+    t.g('pro'), t.g('tipo')), '23505', 'el codigo es unico por hotel');
+  perform t.falla(format(
+    'insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable, clave) values (%s, ''Dup'', ''7.7'', %s, true, ''CAJA'')',
+    t.g('pro'), t.g('tipo')), '23505', 'la clave es unica por hotel');
+
+  -- Without a key they can repeat (partial index) and the same codigo works in another hotel.
+  insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable) values
+    (t.g('pro')::bigint, 'Sin clave 1', '8.1', t.g('tipo')::bigint, true),
+    (t.g('pro')::bigint, 'Sin clave 2', '8.2', t.g('tipo')::bigint, true);
+  perform t.ok(true, 'varias cuentas sin clave conviven');
+  perform t.ok(t.cuenta(format(
+    'select count(*) from public.cuentas_contables where tenant_id = %s and clave = ''CAJA''', t.g('basico'))) = 1,
+    'el mismo codigo y clave existen en otro hotel');
+end $$;
+
+-- ─── Account lookup by key ─────────────────────────────────────────
+do $$
+begin
+  perform t.ok(public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA') =
+               (select id from public.cuentas_contables
+                where tenant_id = t.g('pro')::bigint and clave = 'CAJA'),
+               'fn_cuenta_por_clave devuelve el id de la cuenta');
+  perform t.ok(public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA') <>
+               public.fn_cuenta_por_clave(t.g('basico')::bigint, 'CAJA'),
+               'fn_cuenta_por_clave resuelve dentro del hotel indicado');
+  perform t.falla_con(format('select public.fn_cuenta_por_clave(%s, ''CXC_CLIENTES'')', t.g('pro')),
+                      'P0002', 'CXC_CLIENTES', 'una clave inexistente nombra la clave faltante');
+  perform t.falla_con(format('select public.fn_cuenta_por_clave(%s, ''INACTIVA'')', t.g('pro')),
+                      'P0002', 'INACTIVA', 'una cuenta inactiva no se resuelve');
+end $$;
+
+-- ─── fn_contabilizar: balanced entry and numbering ────────────────────────
+do $$
+declare
+  v_a1 bigint; v_a2 bigint; v_a3 bigint; v_otro bigint;
+  v_pro bigint := t.g('pro')::bigint;
+  v_estab bigint := t.g('pro_estab')::bigint;
+  v_caja bigint := public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA');
+begin
+  v_a1 := public.fn_contabilizar(v_pro, date '2026-03-10', v_estab, 'Venta de prueba', 'factura', 501,
+    '[{"clave":"CAJA","debe":110000},
+      {"clave":"VENTAS","haber":100000},
+      {"clave":"IVA_DEBITO","haber":10000}]'::jsonb);
+
+  perform t.ok((select estado from public.asientos where id = v_a1) = 'CONTABILIZADO',
+               'el asiento nace CONTABILIZADO');
+  perform t.ok((select nro_asiento from public.asientos where id = v_a1) = 1,
+               'el primer asiento del hotel es el 1');
+  perform t.ok((select origen_tipo = 'factura' and fk_origen = 501 from public.asientos where id = v_a1),
+               'el asiento guarda origen_tipo y fk_origen');
+  perform t.ok((select (fecha at time zone 'America/Asuncion')::date from public.asientos where id = v_a1)
+               = date '2026-03-10', 'la fecha se guarda en hora de Asuncion');
+  perform t.ok((select count(*) from public.detalle_asientos where fk_asientos = v_a1) = 3,
+               'se insertan las tres lineas');
+  perform t.ok((select sum(debe) = sum(haber) and sum(debe) = 110000
+                from public.detalle_asientos where fk_asientos = v_a1),
+               'las lineas balancean');
+  perform t.ok((select debe from public.detalle_asientos
+                where fk_asientos = v_a1 and fk_cuenta_contables = v_caja) = 110000,
+               'la clave CAJA se resolvio a la cuenta correcta');
+
+  -- A line by fk_cuenta instead of clave.
+  v_a2 := public.fn_contabilizar(v_pro, date '2026-03-11', v_estab, 'Por id', 'manual', null,
+    jsonb_build_array(jsonb_build_object('fk_cuenta', v_caja, 'debe', 5000),
+                      jsonb_build_object('clave', 'VENTAS', 'haber', 5000)));
+  perform t.ok((select nro_asiento from public.asientos where id = v_a2) = 2,
+               'la numeracion es correlativa por hotel');
+  perform t.ok((select origen_tipo = 'manual' and fk_origen is null from public.asientos where id = v_a2),
+               'un asiento manual no necesita fk_origen');
+
+  -- Another hotel starts its own numbering.
+  v_otro := public.fn_contabilizar(t.g('basico')::bigint, date '2026-03-10', t.g('basico_estab')::bigint,
+    'Venta basico', 'factura', 1,
+    '[{"clave":"CAJA","debe":1000},{"clave":"VENTAS","haber":1000}]'::jsonb);
+  perform t.ok((select nro_asiento from public.asientos where id = v_otro) = 1,
+               'la numeracion es independiente por hotel');
+
+  v_a3 := public.fn_contabilizar(v_pro, date '2026-03-12', v_estab, 'Tercero', 'manual', null,
+    '[{"clave":"CAJA","debe":1},{"clave":"VENTAS","haber":1}]'::jsonb);
+  perform t.ok((select nro_asiento from public.asientos where id = v_a3) = 3
+               and (select ultimo from public.asiento_secuencia where tenant_id = v_pro) = 3,
+               'asiento_secuencia lleva el ultimo numero emitido');
+end $$;
+
+-- ─── fn_contabilizar: invalid input ─────────────────────────────────────
+do $$
+declare
+  v_pro text := t.g('pro');
+  v_estab text := t.g('pro_estab');
+  v_base text := format('select public.fn_contabilizar(%s, date ''2026-03-10'', %s, ''x'', ''manual'', null, ', v_pro, v_estab);
+  v_antes bigint := t.cuenta('select count(*) from public.asientos');
+  v_ajena bigint := public.fn_cuenta_por_clave(t.g('basico')::bigint, 'CAJA');
+  v_padre bigint := t.g('pro_padre')::bigint;
+begin
+  perform t.falla_con(v_base || 'null)', '23514', 'al menos dos', 'rechaza lineas nulas');
+  perform t.falla_con(v_base || '''[]''::jsonb)', '23514', 'al menos dos', 'rechaza un asiento sin lineas');
+  perform t.falla_con(v_base || '''[{"clave":"CAJA","debe":10}]''::jsonb)', '23514', 'al menos dos', 'rechaza una sola linea');
+  perform t.falla_con(v_base || '''{"clave":"CAJA","debe":10}''::jsonb)', '23514', 'al menos dos', 'rechaza lineas que no son un arreglo');
+  perform t.falla_con(v_base || '''[{"clave":"CAJA","debe":100},{"clave":"VENTAS","haber":90}]''::jsonb)',
+                      '23514', 'no balancea', 'rechaza un asiento descuadrado');
+  perform t.falla_con(v_base || '''[{"clave":"CAJA","debe":100,"haber":100},{"clave":"VENTAS","haber":0,"debe":0}]''::jsonb)',
+                      '23514', 'debe o en el haber', 'rechaza una linea con debe y haber a la vez');
+  perform t.falla_con(v_base || '''[{"clave":"CAJA","debe":0},{"clave":"VENTAS","haber":0}]''::jsonb)',
+                      '23514', 'debe o en el haber', 'rechaza lineas en cero');
+  perform t.falla_con(v_base || '''[{"clave":"CAJA","debe":-5},{"clave":"VENTAS","haber":-5}]''::jsonb)',
+                      '23514', 'debe o en el haber', 'rechaza importes negativos');
+  perform t.falla_con(v_base || '''[{"debe":10},{"clave":"VENTAS","haber":10}]''::jsonb)',
+                      '23514', 'clave o fk_cuenta', 'rechaza una linea sin cuenta');
+  perform t.falla_con(v_base || '''[{"clave":"CAJA","fk_cuenta":1,"debe":10},{"clave":"VENTAS","haber":10}]''::jsonb)',
+                      '23514', 'clave o fk_cuenta', 'rechaza una linea con clave y fk_cuenta');
+  perform t.falla_con(v_base || '''[{"clave":"NO_EXISTE","debe":10},{"clave":"VENTAS","haber":10}]''::jsonb)',
+                      'P0002', 'NO_EXISTE', 'rechaza una clave inexistente');
+  perform t.falla_con(v_base || '''[{"clave":"INACTIVA","debe":10},{"clave":"VENTAS","haber":10}]''::jsonb)',
+                      'P0002', 'INACTIVA', 'rechaza una cuenta inactiva');
+  perform t.falla_con(v_base || format('''[{"fk_cuenta":%s,"debe":10},{"clave":"VENTAS","haber":10}]''::jsonb)', v_padre),
+                      '23514', 'imputable', 'rechaza una cuenta no imputable');
+  perform t.falla_con(v_base || format('''[{"fk_cuenta":%s,"debe":10},{"clave":"VENTAS","haber":10}]''::jsonb)', v_ajena),
+                      '23503', 'no pertenece', 'rechaza la cuenta de otro hotel');
+  perform t.falla(format(
+    'select public.fn_contabilizar(%s, date ''2026-03-10'', %s, ''x'', ''inventado'', null, ''[{"clave":"CAJA","debe":10},{"clave":"VENTAS","haber":10}]''::jsonb)',
+    v_pro, v_estab), '23514', 'rechaza un origen_tipo desconocido');
+  perform t.falla_con(format(
+    'select public.fn_contabilizar(%s, date ''2026-03-10'', %s, ''x'', ''manual'', null, ''[{"clave":"CAJA","debe":10},{"clave":"VENTAS","haber":10}]''::jsonb)',
+    v_pro, t.g('basico_estab')), '23503', 'establecimiento', 'rechaza un establecimiento de otro hotel');
+
+  perform t.ok(t.cuenta('select count(*) from public.asientos') = v_antes,
+               'las entradas invalidas no dejan asientos');
+end $$;
+
+-- ─── Direct constraints on asientos and detalle ─────────────────────────
+do $$
+declare
+  v_pro text := t.g('pro');
+  v_estab text := t.g('pro_estab');
+begin
+  perform t.falla(format(
+    'insert into public.asientos (tenant_id, descripcion, nro_asiento, fk_sucursal, estado) values (%s, ''dup'', 1, %s, ''CONTABILIZADO'')',
+    v_pro, v_estab), '23505', 'nro_asiento es unico por hotel');
+  perform t.falla(format(
+    'insert into public.asientos (tenant_id, descripcion, nro_asiento, fk_sucursal, estado) values (%s, ''e'', 900, %s, ''BORRADOR'')',
+    v_pro, v_estab), '23514', 'estado solo admite CONTABILIZADO y ANULADO');
+  perform t.falla(format(
+    'insert into public.asientos (tenant_id, descripcion, nro_asiento, fk_sucursal, estado, origen_tipo) values (%s, ''o'', 901, %s, ''CONTABILIZADO'', ''inventado'')',
+    v_pro, v_estab), '23514', 'origen_tipo solo admite los tipos conocidos');
+  -- A valid type and a null origin are accepted.
+  insert into public.asientos (tenant_id, descripcion, nro_asiento, fk_sucursal, estado, origen_tipo)
+    values (v_pro::bigint, 'o', 902, v_estab::bigint, 'CONTABILIZADO', 'pago_anulacion');
+  insert into public.asientos (tenant_id, descripcion, nro_asiento, fk_sucursal, estado, origen_tipo)
+    values (v_pro::bigint, 'o', 903, v_estab::bigint, 'ANULADO', null);
+  perform t.ok(true, 'origen_tipo acepta un tipo conocido y tambien null');
+end $$;
+
+do $$
+declare
+  v_pro text := t.g('pro');
+  v_a bigint := (select id from public.asientos where tenant_id = t.g('pro')::bigint and nro_asiento = 1);
+  v_cta bigint := public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA');
+  v_ins text := format('insert into public.detalle_asientos (tenant_id, fk_cuenta_contables, fk_asientos, debe, haber) values (%s, %s, %s, ',
+                       t.g('pro'), public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA'),
+                       (select id from public.asientos where tenant_id = t.g('pro')::bigint and nro_asiento = 1));
+begin
+  perform t.falla(v_ins || '-1, 0)', '23514', 'debe negativo');
+  perform t.falla(v_ins || '0, -1)', '23514', 'haber negativo');
+  perform t.falla(v_ins || '5, 5)', '23514', 'debe y haber a la vez');
+  perform t.falla(v_ins || '0, 0)', '23514', 'debe y haber en cero');
+  perform t.ok(exists (select 1 from pg_constraint
+                       where conrelid = 'public.detalle_asientos'::regclass and contype = 'u'
+                         and pg_get_constraintdef(oid) = 'UNIQUE (tenant_id, id)'),
+               'detalle_asientos tiene UNIQUE (tenant_id, id)');
+end $$;
+
+-- ─── Deferred balance trigger ─────────────────────────────────────────────
+do $$
+declare
+  v_pro text := t.g('pro');
+  v_estab text := t.g('pro_estab');
+  v_caja text := public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA')::text;
+  v_ventas text := public.fn_cuenta_por_clave(t.g('pro')::bigint, 'VENTAS')::text;
+  v_asiento bigint;
+  v_linea bigint;
+begin
+  perform t.ok((select tgdeferrable and tginitdeferred from pg_trigger
+                where tgrelid = 'public.detalle_asientos'::regclass and tgconstraint <> 0
+                  and tgname = 'detalle_asientos_balanceado'),
+               'el balance se verifica en un constraint trigger DEFERRABLE INITIALLY DEFERRED');
+
+  -- Insert the asiento and ONE line: with the deferred trigger it does not fail until commit.
+  insert into public.asientos (tenant_id, descripcion, nro_asiento, fk_sucursal, estado, origen_tipo)
+    values (v_pro::bigint, 'directo', 800, v_estab::bigint, 'CONTABILIZADO', 'manual') returning id into v_asiento;
+  insert into public.detalle_asientos (tenant_id, fk_cuenta_contables, fk_asientos, debe, haber)
+    values (v_pro::bigint, v_caja::bigint, v_asiento, 100, 0);
+  perform t.ok(true, 'la linea suelta no falla mientras la transaccion sigue abierta');
+  perform t.falla_con('set constraints all immediate', '23514', 'no balancea',
+                      'al confirmar, un asiento descuadrado se rechaza');
+  -- The failed SET CONSTRAINTS leaves the transaction usable: still deferred.
+
+  insert into public.detalle_asientos (tenant_id, fk_cuenta_contables, fk_asientos, debe, haber)
+    values (v_pro::bigint, v_ventas::bigint, v_asiento, 0, 100) returning id into v_linea;
+  set constraints all immediate;
+  set constraints all deferred;
+  perform t.ok(true, 'completar la contrapartida deja el asiento balanceado');
+
+  update public.detalle_asientos set haber = 90 where id = v_linea;
+  perform t.falla('set constraints all immediate', '23514', 'cambiar un importe y descuadrar se rechaza');
+  update public.detalle_asientos set haber = 100 where id = v_linea;
+  set constraints all immediate;
+  set constraints all deferred;
+
+  delete from public.detalle_asientos where id = v_linea;
+  perform t.falla('set constraints all immediate', '23514', 'borrar una linea y descuadrar se rechaza');
+  insert into public.detalle_asientos (tenant_id, fk_cuenta_contables, fk_asientos, debe, haber)
+    values (v_pro::bigint, v_ventas::bigint, v_asiento, 0, 100);
+  set constraints all immediate;
+  set constraints all deferred;
+  perform t.ok(true, 'reponer la linea deja el asiento balanceado');
+end $$;
+
+-- ─── fn_contabilizar_reverso ─────────────────────────────────────────────────
+do $$
+declare
+  v_pro bigint := t.g('pro')::bigint;
+  v_estab bigint := t.g('pro_estab')::bigint;
+  v_orig bigint; v_rev bigint; v_nro_orig bigint;
+  v_caja bigint := public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA');
+begin
+  v_orig := public.fn_contabilizar(v_pro, date '2026-04-01', v_estab, 'Factura a anular', 'factura', 777,
+    '[{"clave":"CAJA","debe":55000},{"clave":"VENTAS","haber":50000},{"clave":"IVA_DEBITO","haber":5000}]'::jsonb);
+  v_nro_orig := (select nro_asiento from public.asientos where id = v_orig);
+
+  v_rev := public.fn_contabilizar_reverso(v_pro, 'factura', 777, date '2026-04-02');
+  perform t.ok(v_rev <> v_orig and (select nro_asiento from public.asientos where id = v_rev) = v_nro_orig + 1,
+               'el reverso es un asiento nuevo con el siguiente numero');
+  perform t.ok((select origen_tipo from public.asientos where id = v_rev) = 'factura_anulacion'
+               and (select fk_origen from public.asientos where id = v_rev) = 777,
+               'el reverso usa <tipo>_anulacion y el mismo fk_origen');
+  perform t.ok((select (fecha at time zone 'America/Asuncion')::date from public.asientos where id = v_rev)
+               = date '2026-04-02', 'el reverso toma la fecha indicada');
+  perform t.ok((select haber from public.detalle_asientos where fk_asientos = v_rev and fk_cuenta_contables = v_caja) = 55000
+               and (select debe from public.detalle_asientos where fk_asientos = v_rev and fk_cuenta_contables = v_caja) = 0,
+               'las lineas del reverso estan invertidas');
+  perform t.ok((select sum(debe) = sum(haber) and count(*) = 3 from public.detalle_asientos where fk_asientos = v_rev),
+               'el reverso balancea y copia todas las lineas');
+  perform t.ok((select count(*) from public.asientos
+                where id in (v_orig, v_rev) and estado = 'ANULADO') = 2,
+               'el original y su reverso quedan ANULADO');
+  perform t.ok((select coalesce(sum(debe - haber), 0) from public.detalle_asientos
+                where fk_asientos in (v_orig, v_rev)) = 0,
+               'el par original + reverso neta cero');
+
+  perform t.falla_con(format('select public.fn_contabilizar_reverso(%s, ''factura'', 777, date ''2026-04-03'')', v_pro),
+                      '55000', 'ya fue anulado', 'no se puede revertir dos veces');
+  perform t.falla_con(format('select public.fn_contabilizar_reverso(%s, ''factura'', 99999, date ''2026-04-03'')', v_pro),
+                      'P0002', 'no hay un asiento', 'revertir un origen sin asiento falla con mensaje claro');
+  perform t.falla_con(format('select public.fn_contabilizar_reverso(%s, ''manual'', 1, date ''2026-04-03'')', v_pro),
+                      '23514', 'no admite reverso', 'un origen manual no admite reverso');
+  perform t.falla_con(format('select public.fn_contabilizar_reverso(%s, ''factura'', 501, date ''2026-04-03'')', t.g('basico')),
+                      'P0002', 'no hay un asiento', 'el reverso no cruza de hotel');
+end $$;
+
+-- ─── Privileges of the internal functions ───────────────────────────────────
+do $$
+declare
+  v_firmas text[] := array[
+    'public.fn_contabilizar(bigint, date, bigint, text, text, bigint, jsonb)',
+    'public.fn_contabilizar_reverso(bigint, text, bigint, date)',
+    'public.fn_cuenta_por_clave(bigint, text)',
+    'public.fn_siguiente_nro_asiento(bigint)'];
+  v_f text;
+begin
+  foreach v_f in array v_firmas loop
+    perform t.ok(not has_function_privilege('authenticated', v_f, 'execute')
+                 and not has_function_privilege('anon', v_f, 'execute'),
+                 v_f || ' no es ejecutable por authenticated ni anon');
+  end loop;
+
+  perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
+  perform t.falla(format(
+    'select public.fn_contabilizar(%s, current_date, %s, ''x'', ''manual'', null, ''[{"clave":"CAJA","debe":1},{"clave":"VENTAS","haber":1}]''::jsonb)',
+    t.g('pro'), t.g('pro_estab')), '42501', 'un admin autenticado no llama a fn_contabilizar');
+  perform t.falla(format('select public.fn_cuenta_por_clave(%s, ''CAJA'')', t.g('pro')), '42501',
+                  'un admin autenticado no llama a fn_cuenta_por_clave');
+  perform t.falla(format('select public.fn_siguiente_nro_asiento(%s)', t.g('pro')), '42501',
+                  'un admin autenticado no consume numeros de asiento');
+  perform t.volver();
+
+  perform t.anonimo();
+  perform t.falla(format('select public.fn_contabilizar_reverso(%s, ''factura'', 777, current_date)', t.g('pro')), '42501',
+                  'anon no llama a fn_contabilizar_reverso');
+  perform t.volver();
+end $$;
+
+-- ─── RLS: only admin and gerente read and write accounting ───────────────
+do $$
+declare
+  v_tabla text;
+begin
+  insert into public.saldos_mensuales (tenant_id, fk_cuenta, mes, anio, saldo_debe_acumulado, saldo_haber_acumulado, saldo_final)
+    values (t.g('pro')::bigint, public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA'), 3, 2026, 0, 0, 0);
+
+  foreach v_tabla in array array['cuentas_contables', 'asientos', 'detalle_asientos', 'saldos_mensuales'] loop
+    perform t.ok(t.cuenta(format('select count(*) from public.%I where tenant_id = %s', v_tabla, t.g('pro'))) > 0,
+                 v_tabla || ': hay filas en pro (control)');
+
+    perform t.actuar(t.g('rec'), t.g('pro')::bigint);
+    perform t.ok(t.cuenta(format('select count(*) from public.%I', v_tabla)) = 0,
+                 v_tabla || ': la recepcionista lee 0 filas');
+    perform t.volver();
+
+    perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
+    perform t.ok(t.cuenta(format('select count(*) from public.%I', v_tabla)) > 0,
+                 v_tabla || ': el admin lee');
+    perform t.volver();
+
+    perform t.actuar(t.g('ger'), t.g('pro')::bigint);
+    perform t.ok(t.cuenta(format('select count(*) from public.%I', v_tabla)) > 0,
+                 v_tabla || ': el gerente lee');
+    perform t.volver();
+  end loop;
+
+  -- Writes: admin and gerente yes; receptionist no.
+  perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
+  insert into public.cuentas_contables (nombre, codigo, fk_tipo_cuenta, imputable)
+    values ('Del admin', '6.1', t.g('tipo')::bigint, true);
+  perform t.filas('update public.cuentas_contables set nombre = ''Del admin 2'' where codigo = ''6.1''', 1,
+                  'el admin actualiza cuentas_contables');
+  perform t.volver();
+
+  perform t.actuar(t.g('ger'), t.g('pro')::bigint);
+  insert into public.cuentas_contables (nombre, codigo, fk_tipo_cuenta, imputable)
+    values ('Del gerente', '6.2', t.g('tipo')::bigint, true);
+  perform t.filas('delete from public.cuentas_contables where codigo = ''6.2''', 1,
+                  'el gerente borra cuentas_contables');
+  perform t.volver();
+
+  perform t.actuar(t.g('rec'), t.g('pro')::bigint);
+  perform t.falla(format(
+    'insert into public.cuentas_contables (nombre, codigo, fk_tipo_cuenta, imputable) values (''Rec'', ''6.3'', %s, true)',
+    t.g('tipo')), '42501', 'la recepcionista no escribe cuentas_contables');
+  perform t.falla(format(
+    'insert into public.asientos (descripcion, nro_asiento, fk_sucursal, estado) values (''r'', 950, %s, ''CONTABILIZADO'')',
+    t.g('pro_estab')), '42501', 'la recepcionista no escribe asientos');
+  perform t.volver();
+
+  -- Isolation between hotels: the pro admin does not see basico's asiento.
+  perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
+  perform t.ok(t.cuenta(format('select count(*) from public.asientos where tenant_id = %s', t.g('basico'))) = 0,
+               'el admin de pro no ve asientos de basico');
+  perform t.volver();
+end $$;
+
+-- An asiento written directly by the admin (as the API would) also passes the balance check.
+do $$
+declare
+  v_a bigint;
+  v_caja bigint := public.fn_cuenta_por_clave(t.g('pro')::bigint, 'CAJA');
+  v_ventas bigint := public.fn_cuenta_por_clave(t.g('pro')::bigint, 'VENTAS');
+begin
+  perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
+  insert into public.asientos (descripcion, nro_asiento, fk_sucursal, estado, origen_tipo)
+    values ('api', 960, t.g('pro_estab')::bigint, 'CONTABILIZADO', 'manual') returning id into v_a;
+  insert into public.detalle_asientos (fk_cuenta_contables, fk_asientos, debe, haber) values
+    (v_caja, v_a, 10, 0),
+    (v_ventas, v_a, 0, 10);
+  set constraints all immediate;
+  set constraints all deferred;
+  perform t.ok(true, 'un asiento balanceado insertado por el admin autenticado se acepta');
+  perform t.volver();
+end $$;
+
+-- ─── Policies: plan basico vs pro and the 0006/0014 rules ─────────────────────
+do $$
+declare
+  v_tabla text;
+begin
+  perform t.actuar(t.g('basico_admin'), t.g('basico')::bigint);
+  perform t.falla(format(
+    'insert into public.cuentas_contables (nombre, codigo, fk_tipo_cuenta, imputable) values (''B'', ''5.5'', %s, true)',
+    t.g('tipo')), '42501', 'el plan basico no escribe cuentas_contables');
+  perform t.falla(format(
+    'insert into public.asientos (descripcion, nro_asiento, fk_sucursal, estado) values (''b'', 970, %s, ''CONTABILIZADO'')',
+    t.g('basico_estab')), '42501', 'el plan basico no escribe asientos');
+  perform t.ok(t.cuenta('select count(*) from public.cuentas_contables') > 0,
+               'el plan basico si lee su plan de cuentas');
+  perform t.volver();
+
+  foreach v_tabla in array array['cuentas_contables', 'asientos', 'detalle_asientos', 'saldos_mensuales'] loop
+    perform t.ok((select count(*) from pg_policies
+                  where schemaname = 'public' and tablename = v_tabla and permissive = 'RESTRICTIVE') = 6,
+                 v_tabla || ' conserva las 6 policies RESTRICTIVE de 0014');
+    perform t.ok((select qual from pg_policies
+                  where schemaname = 'public' and tablename = v_tabla and policyname = v_tabla || '_select')
+                 like '%current_es_admin_o_gerente%',
+                 v_tabla || '_select exige admin o gerente');
+    perform t.ok((select count(*) from pg_policies
+                  where schemaname = 'public' and tablename = v_tabla and cmd = 'SELECT'
+                    and permissive = 'PERMISSIVE') = 1,
+                 v_tabla || ' tiene una sola policy de lectura');
+  end loop;
+end $$;
+
+-- ─── asiento_secuencia: read-only for the client ─────────────────────────
+do $$
+begin
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.asiento_secuencia'::regclass),
+               'asiento_secuencia tiene RLS');
+  perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
+  perform t.ok(t.cuenta('select count(*) from public.asiento_secuencia') = 1,
+               'el admin lee solo la secuencia de su hotel');
+  perform t.falla(format('insert into public.asiento_secuencia (tenant_id, ultimo) values (%s, 99)', t.g('pro')),
+                  '42501', 'el cliente no inserta en asiento_secuencia');
+  perform t.falla('update public.asiento_secuencia set ultimo = 1', '42501',
+                  'el cliente no actualiza asiento_secuencia');
+  perform t.falla('delete from public.asiento_secuencia', '42501', 'el cliente no borra asiento_secuencia');
+  perform t.volver();
+  perform t.anonimo();
+  perform t.falla('select count(*) from public.asiento_secuencia', '42501', 'anon no lee asiento_secuencia');
+  perform t.volver();
+end $$;
+
+-- ─── saldos_mensuales documented as unused ───────────────────────────────
+do $$
+begin
+  perform t.ok(obj_description('public.saldos_mensuales'::regclass, 'pg_class') ilike '%unused%',
+               'saldos_mensuales queda documentada como sin uso');
+end $$;
+
+-- ═══ FIN (later tasks add their sections before this line) ═══
+
+select 'TODAS LAS PRUEBAS DE FINANZAS PASARON' as resultado;
+
+rollback;

@@ -28,8 +28,8 @@ Simple finance module for the hotel: income and expenses, accounts receivable an
 - Advisory heuristic: ~400 authored changed lines per task.
 
 ## Tasks
-- [ ] T0 Feature document and branch.
-- [ ] T1 Migration 0016: fixes to `cuentas_contables`/`asientos`/`detalle_asientos`, `asiento_secuencia`, `fn_contabilizar`, balance constraint trigger, RLS move to `admin_gerente_total`; `saas-db/tests/finanzas.sql` (base).
+- [x] T0 Feature document and branch. Commit: f4a3fa0.
+- [x] T1 Migration 0016: fixes to `cuentas_contables`/`asientos`/`detalle_asientos`, `asiento_secuencia`, `fn_contabilizar`, balance constraint trigger, RLS move to `admin_gerente_total`; `saas-db/tests/finanzas.sql` (base). Route: delegated writer. RED observed (fixtures failed, no `clave` column), GREEN on throwaway PG17 with a Supabase stub: finanzas 118 ok, planes 24 ok, aislamiento 122 ok, registro_publico 35 ok; 0016 re-run is idempotent; real COMMIT with an unbalanced entry rejected. Not run: real Supabase/PostgREST, concurrency. Commit: pending (parent).
 - [ ] T2 Migration 0017: `tipo_cuenta_contable` seed, PY hotel chart of accounts in `plantilla-base`, `categorias_finanzas`, updated `fn_seed_tenant_desde_plantilla`, backfill.
 - [ ] T3 Migration 0018: `cuentas_fondos`, `medios_pago_fondo`, `facturas` credit columns, posting of invoice and annulment.
 - [ ] T4 Migration 0019: `proveedores`, `gastos`, `cobros`, `pagos`, `transferencias_fondos`, opening balances, posting and policies.
@@ -51,7 +51,8 @@ Simple finance module for the hotel: income and expenses, accounts receivable an
 `npm test` (vitest), SQL tests in `saas-db/tests/` (`finanzas.sql`, `aislamiento.sql`, `planes.sql`) on a throwaway PG, manual run of the Finanzas tab as admin and recepcionista.
 
 ## Progress
-- Branch and feature document created. Next: T1.
+- T0 and T1 done. Next: T2 (chart of accounts + backfill).
+- Carry-over for T5: reversals leave both the original and the reversal asiento in `ANULADO`; the month-lock guard on `asientos` must allow that `estado -> ANULADO` update. `finanzas.sql` has a `FIN` marker: add new `do $$` sections before it. Local PG17 test method: see T1 evidence (throwaway cluster + Supabase stub).
 
 ## Route declaration
 (filled per task as work proceeds)
