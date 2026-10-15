@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { CONDICION_VENTA_CONTADO } from '../types/factura';
 
 export interface IngresoPorMetodo {
   metodo: string;
@@ -84,7 +85,7 @@ function localMidnightToUtcIso(iso: string): string {
 
 export const reporteService = {
   // Ingresos emitidos entre [desde, hasta] (ambos inclusive), excluyendo
-  // facturas anuladas, totalizados y agrupados por método de pago.
+  // facturas anuladas y las de crédito (no son efectivo cobrado), totalizados y agrupados por método de pago.
   //
   // `fecha_emision` puede ser `date` o `timestamp` según la columna real;
   // por eso el filtro es .gte(desde) + .lt(díaSiguienteDeHasta) en vez de
@@ -94,6 +95,9 @@ export const reporteService = {
       .from('facturas')
       .select('total_general, fk_modo_pago, modo_pago:modo_pago(descripcion)')
       .neq('estado', 'ANULADA')
+      // Credit invoices are not cash received; collections are reported by
+      // the finance module.
+      .eq('condicion_venta', CONDICION_VENTA_CONTADO)
       .gte('fecha_emision', localMidnightToUtcIso(desde))
       .lt('fecha_emision', localMidnightToUtcIso(addOneDay(hasta)));
 
@@ -155,6 +159,7 @@ export const reporteService = {
       .from('facturas')
       .select('fk_turno, total_general')
       .neq('estado', 'ANULADA')
+      .eq('condicion_venta', CONDICION_VENTA_CONTADO)
       .in('fk_turno', turnos.map((t) => t.id_turno));
 
     if (facturasError) throw facturasError;

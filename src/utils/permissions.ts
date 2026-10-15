@@ -19,7 +19,8 @@ export type TabId =
   | 'edificios'
   | 'pisos'
   | 'productos'
-  | 'reportes';
+  | 'reportes'
+  | 'finanzas';
 
 export type Role = 'admin' | 'gerente' | 'recepcionista' | 'limpiador' | 'unknown';
 
@@ -30,7 +31,7 @@ const ALL_TABS: TabId[] = [
   'estado-limpieza', 'usuarios',
   'establecimientos', 'empresas',
   'edificios', 'pisos',
-  'productos', 'reportes'
+  'productos', 'reportes', 'finanzas'
 ];
 
 export function normalizeRole(cargo?: string | null): Role {
@@ -80,13 +81,23 @@ export function allowedTabs(role: Role): TabId[] {
           tab !== 'empresas' &&
           tab !== 'edificios' &&
           tab !== 'pisos' &&
-          tab !== 'reportes'
+          tab !== 'reportes' &&
+          tab !== 'finanzas'
       );
   }
 }
 
 export function canAccessTab(role: Role, tab: TabId): boolean {
   return allowedTabs(role).includes(tab);
+}
+
+// Finanzas: rol admin/gerente Y módulo `contabilidad` incluido en el plan del
+// hotel. Si el plan no lo incluye la pestaña se oculta (sin upsell).
+export function canAccessFinanzas(
+  role: Role,
+  modulos: { contabilidad: boolean }
+): boolean {
+  return canAccessTab(role, 'finanzas') && modulos.contabilidad;
 }
 
 // Solo el limpiador tiene prohibido bloquear/desbloquear habitaciones: en

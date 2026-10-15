@@ -1,0 +1,63 @@
+import { useState } from 'react';
+import type { CSSProperties } from 'react';
+import { ModuleLayout } from '../components/ModuleLayout';
+
+type FinanzasTabId =
+  | 'resumen'
+  | 'gastos'
+  | 'cobros'
+  | 'pagos'
+  | 'proveedores'
+  | 'fondos'
+  | 'reportes'
+  | 'cierres';
+
+const SUB_TABS: { key: FinanzasTabId; label: string }[] = [
+  { key: 'resumen', label: 'Resumen' },
+  { key: 'gastos', label: 'Gastos' },
+  { key: 'cobros', label: 'Cobros' },
+  { key: 'pagos', label: 'Pagos' },
+  { key: 'proveedores', label: 'Proveedores' },
+  { key: 'fondos', label: 'Fondos' },
+  { key: 'reportes', label: 'Reportes' },
+  { key: 'cierres', label: 'Cierres' },
+];
+
+const panelStyle: CSSProperties = {
+  background: 'var(--glass-bg)',
+  border: '1px solid var(--glass-border)',
+  borderRadius: 16,
+  padding: 24,
+  color: 'var(--text-secondary)',
+};
+
+// Shell for the finance module. Each sub-tab is a placeholder until its page
+// lands (suppliers, funds, expenses, collections, reports, month closing).
+// The classes below are the same ones StatusTabs uses, minus its mandatory
+// "(count)" suffix, which makes no sense for static sections.
+export default function Finanzas() {
+  const [tab, setTab] = useState<FinanzasTabId>('resumen');
+  const current = SUB_TABS.find(t => t.key === tab) ?? SUB_TABS[0];
+
+  return (
+    <ModuleLayout
+      title="Finanzas"
+      description="Ingresos, gastos, cuentas por cobrar y pagar, fondos y cierres mensuales."
+    >
+      <div className="tabs-bar">
+        {SUB_TABS.map(t => (
+          <button
+            key={t.key}
+            className={`tab-btn ${tab === t.key ? 'active' : ''}`}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ ...panelStyle, marginTop: 20 }}>
+        {current.label}: en construcción.
+      </div>
+    </ModuleLayout>
+  );
+}

@@ -1,3 +1,4 @@
+// NOTE: tables 0016-0021 (finanzas), planes and the fn_rep_*/fn_cerrar_mes RPCs were hand-merged until the next regeneration (supabase CLI needs Docker).
 export type Json =
   | string
   | number
@@ -345,6 +346,47 @@ export type Database = {
           },
         ]
       }
+      categorias_finanzas: {
+        Row: {
+          activo: boolean
+          created_at: string
+          es_sistema: boolean
+          fk_cuenta_contable: number
+          id: number
+          nombre: string
+          tenant_id: number
+          tipo: string
+        }
+        Insert: {
+          activo?: boolean
+          created_at?: string
+          es_sistema?: boolean
+          fk_cuenta_contable: number
+          id?: never
+          nombre: string
+          tenant_id?: number
+          tipo: string
+        }
+        Update: {
+          activo?: boolean
+          created_at?: string
+          es_sistema?: boolean
+          fk_cuenta_contable?: number
+          id?: never
+          nombre?: string
+          tenant_id?: number
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "categorias_finanzas_cuenta_fkey"
+            columns: ["fk_cuenta_contable"]
+            isOneToOne: false
+            referencedRelation: "cuentas_contables"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ciudades: {
         Row: {
           cod_ciudades: number
@@ -460,6 +502,57 @@ export type Database = {
           },
         ]
       }
+      cobros: {
+        Row: {
+          created_at: string
+          estado: string
+          fecha: string
+          fk_cuenta_fondo: number
+          fk_factura: number
+          id: number
+          monto: number
+          observacion: string | null
+          tenant_id: number
+        }
+        Insert: {
+          created_at?: string
+          estado?: string
+          fecha?: string
+          fk_cuenta_fondo: number
+          fk_factura: number
+          id?: never
+          monto: number
+          observacion?: string | null
+          tenant_id?: number
+        }
+        Update: {
+          created_at?: string
+          estado?: string
+          fecha?: string
+          fk_cuenta_fondo?: number
+          fk_factura?: number
+          id?: never
+          monto?: number
+          observacion?: string | null
+          tenant_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cobros_factura_fkey"
+            columns: ["fk_factura"]
+            isOneToOne: false
+            referencedRelation: "facturas"
+            referencedColumns: ["id_factura"]
+          },
+          {
+            foreignKeyName: "cobros_fondo_fkey"
+            columns: ["fk_cuenta_fondo"]
+            isOneToOne: false
+            referencedRelation: "cuentas_fondos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conceptos: {
         Row: {
           arancel: number
@@ -513,6 +606,8 @@ export type Database = {
       }
       cuentas_contables: {
         Row: {
+          activo: boolean
+          clave: string | null
           codigo: string | null
           created_at: string
           fk_cuenta_padre: number | null
@@ -522,6 +617,8 @@ export type Database = {
           nombre: string
         }
         Insert: {
+          activo?: boolean
+          clave?: string | null
           codigo?: string | null
           created_at?: string
           fk_cuenta_padre?: number | null
@@ -531,6 +628,8 @@ export type Database = {
           nombre: string
         }
         Update: {
+          activo?: boolean
+          clave?: string | null
           codigo?: string | null
           created_at?: string
           fk_cuenta_padre?: number | null
@@ -552,6 +651,54 @@ export type Database = {
             columns: ["fk_tipo_cuenta"]
             isOneToOne: false
             referencedRelation: "tipo_cuenta_contable"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cuentas_fondos: {
+        Row: {
+          activo: boolean
+          created_at: string
+          fk_caja: number | null
+          fk_cuenta_contable: number
+          id: number
+          nombre: string
+          tenant_id: number
+          tipo: string
+        }
+        Insert: {
+          activo?: boolean
+          created_at?: string
+          fk_caja?: number | null
+          fk_cuenta_contable: number
+          id?: never
+          nombre: string
+          tenant_id?: number
+          tipo: string
+        }
+        Update: {
+          activo?: boolean
+          created_at?: string
+          fk_caja?: number | null
+          fk_cuenta_contable?: number
+          id?: never
+          nombre?: string
+          tenant_id?: number
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cuentas_fondos_caja_fkey"
+            columns: ["fk_caja"]
+            isOneToOne: false
+            referencedRelation: "caja"
+            referencedColumns: ["id_caja"]
+          },
+          {
+            foreignKeyName: "cuentas_fondos_cuenta_fkey"
+            columns: ["fk_cuenta_contable"]
+            isOneToOne: true
+            referencedRelation: "cuentas_contables"
             referencedColumns: ["id"]
           },
         ]
@@ -1017,12 +1164,13 @@ export type Database = {
           efectivo: number
           estado: string
           fecha_emision: string
+          fecha_vencimiento: string | null
           fk_cliente: number
           fk_establecimientos: number
           fk_factura_asociada: number | null
           fk_folio: number | null
           fk_inmueble: number
-          fk_modo_pago: number
+          fk_modo_pago: number | null
           fk_monedas: number
           fk_motivo: number | null
           fk_tipo_factura: number
@@ -1030,6 +1178,7 @@ export type Database = {
           id_factura: number
           nro_secuencial: number
           observacion: string
+          saldo_pendiente: number
           tipo_emision: number | null
           total_exenta: number
           total_general: number
@@ -1044,12 +1193,13 @@ export type Database = {
           efectivo: number
           estado?: string
           fecha_emision?: string
+          fecha_vencimiento?: string | null
           fk_cliente: number
           fk_establecimientos: number
           fk_factura_asociada?: number | null
           fk_folio?: number | null
           fk_inmueble: number
-          fk_modo_pago: number
+          fk_modo_pago?: number | null
           fk_monedas: number
           fk_motivo?: number | null
           fk_tipo_factura: number
@@ -1057,6 +1207,7 @@ export type Database = {
           id_factura?: never
           nro_secuencial: number
           observacion: string
+          saldo_pendiente?: number
           tipo_emision?: number | null
           total_exenta: number
           total_general: number
@@ -1071,12 +1222,13 @@ export type Database = {
           efectivo?: number
           estado?: string
           fecha_emision?: string
+          fecha_vencimiento?: string | null
           fk_cliente?: number
           fk_establecimientos?: number
           fk_factura_asociada?: number | null
           fk_folio?: number | null
           fk_inmueble?: number
-          fk_modo_pago?: number
+          fk_modo_pago?: number | null
           fk_monedas?: number
           fk_motivo?: number | null
           fk_tipo_factura?: number
@@ -1084,6 +1236,7 @@ export type Database = {
           id_factura?: never
           nro_secuencial?: number
           observacion?: string
+          saldo_pendiente?: number
           tipo_emision?: number | null
           total_exenta?: number
           total_general?: number
@@ -1200,6 +1353,104 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "usuario"
             referencedColumns: ["id_usuario"]
+          },
+        ]
+      }
+      gastos: {
+        Row: {
+          condicion: string
+          created_at: string
+          estado: string
+          exenta: number
+          fecha: string
+          fecha_vencimiento: string | null
+          fk_categoria: number
+          fk_cuenta_fondo: number | null
+          fk_establecimientos: number
+          fk_proveedor: number | null
+          gravado_10: number
+          gravado_5: number
+          id: number
+          iva_10: number
+          iva_5: number
+          nro_comprobante: string | null
+          observacion: string | null
+          saldo_pendiente: number
+          tenant_id: number
+          total: number
+        }
+        Insert: {
+          condicion: string
+          created_at?: string
+          estado?: string
+          exenta?: number
+          fecha?: string
+          fecha_vencimiento?: string | null
+          fk_categoria: number
+          fk_cuenta_fondo?: number | null
+          fk_establecimientos: number
+          fk_proveedor?: number | null
+          gravado_10?: number
+          gravado_5?: number
+          id?: never
+          iva_10?: number
+          iva_5?: number
+          nro_comprobante?: string | null
+          observacion?: string | null
+          saldo_pendiente?: number
+          tenant_id?: number
+          total?: number
+        }
+        Update: {
+          condicion?: string
+          created_at?: string
+          estado?: string
+          exenta?: number
+          fecha?: string
+          fecha_vencimiento?: string | null
+          fk_categoria?: number
+          fk_cuenta_fondo?: number | null
+          fk_establecimientos?: number
+          fk_proveedor?: number | null
+          gravado_10?: number
+          gravado_5?: number
+          id?: never
+          iva_10?: number
+          iva_5?: number
+          nro_comprobante?: string | null
+          observacion?: string | null
+          saldo_pendiente?: number
+          tenant_id?: number
+          total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gastos_categoria_fkey"
+            columns: ["fk_categoria"]
+            isOneToOne: false
+            referencedRelation: "categorias_finanzas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gastos_establecimiento_fkey"
+            columns: ["fk_establecimientos"]
+            isOneToOne: false
+            referencedRelation: "establecimientos"
+            referencedColumns: ["id_establecimiento"]
+          },
+          {
+            foreignKeyName: "gastos_fondo_fkey"
+            columns: ["fk_cuenta_fondo"]
+            isOneToOne: false
+            referencedRelation: "cuentas_fondos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gastos_proveedor_fkey"
+            columns: ["fk_proveedor"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1356,6 +1607,45 @@ export type Database = {
         }
         Relationships: []
       }
+      medios_pago_fondo: {
+        Row: {
+          created_at: string
+          fk_fondo: number
+          fk_modo_pago: number
+          id: number
+          tenant_id: number
+        }
+        Insert: {
+          created_at?: string
+          fk_fondo: number
+          fk_modo_pago: number
+          id?: never
+          tenant_id?: number
+        }
+        Update: {
+          created_at?: string
+          fk_fondo?: number
+          fk_modo_pago?: number
+          id?: never
+          tenant_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "medios_pago_fondo_fk_modo_pago_fkey"
+            columns: ["fk_modo_pago"]
+            isOneToOne: false
+            referencedRelation: "modo_pago"
+            referencedColumns: ["id_modo_pago"]
+          },
+          {
+            foreignKeyName: "medios_pago_fondo_fondo_fkey"
+            columns: ["fk_fondo"]
+            isOneToOne: false
+            referencedRelation: "cuentas_fondos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       modo_pago: {
         Row: {
           created_at: string
@@ -1473,6 +1763,57 @@ export type Database = {
           },
         ]
       }
+      pagos: {
+        Row: {
+          created_at: string
+          estado: string
+          fecha: string
+          fk_cuenta_fondo: number
+          fk_gasto: number
+          id: number
+          monto: number
+          observacion: string | null
+          tenant_id: number
+        }
+        Insert: {
+          created_at?: string
+          estado?: string
+          fecha?: string
+          fk_cuenta_fondo: number
+          fk_gasto: number
+          id?: never
+          monto: number
+          observacion?: string | null
+          tenant_id?: number
+        }
+        Update: {
+          created_at?: string
+          estado?: string
+          fecha?: string
+          fk_cuenta_fondo?: number
+          fk_gasto?: number
+          id?: never
+          monto?: number
+          observacion?: string | null
+          tenant_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pagos_fondo_fkey"
+            columns: ["fk_cuenta_fondo"]
+            isOneToOne: false
+            referencedRelation: "cuentas_fondos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pagos_gasto_fkey"
+            columns: ["fk_gasto"]
+            isOneToOne: false
+            referencedRelation: "gastos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       paises: {
         Row: {
           created_at: string
@@ -1493,6 +1834,41 @@ export type Database = {
           pais_descripcion?: string | null
         }
         Relationships: []
+      }
+      periodos_cerrados: {
+        Row: {
+          anio: number
+          cerrado_en: string
+          cerrado_por: number
+          id: number
+          mes: number
+          tenant_id: number
+        }
+        Insert: {
+          anio: number
+          cerrado_en?: string
+          cerrado_por: number
+          id?: never
+          mes: number
+          tenant_id?: number
+        }
+        Update: {
+          anio?: number
+          cerrado_en?: string
+          cerrado_por?: number
+          id?: never
+          mes?: number
+          tenant_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "periodos_cerrados_usuario_fkey"
+            columns: ["cerrado_por"]
+            isOneToOne: false
+            referencedRelation: "usuario"
+            referencedColumns: ["id_usuario"]
+          },
+        ]
       }
       pisos: {
         Row: {
@@ -1525,6 +1901,58 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      planes: {
+        Row: {
+          codigo: string
+          max_habitaciones: number | null
+          max_hoteles: number | null
+          max_usuarios: number | null
+          mod_contabilidad: boolean
+          mod_sifen: boolean
+          moneda: string
+          nombre: string
+          orden: number
+          precio_anual: number
+          precio_mensual: number
+          visible: boolean
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      proveedores: {
+        Row: {
+          activo: boolean
+          created_at: string
+          email: string | null
+          id: number
+          nombre: string
+          ruc: string | null
+          telefono: string | null
+          tenant_id: number
+        }
+        Insert: {
+          activo?: boolean
+          created_at?: string
+          email?: string | null
+          id?: never
+          nombre: string
+          ruc?: string | null
+          telefono?: string | null
+          tenant_id?: number
+        }
+        Update: {
+          activo?: boolean
+          created_at?: string
+          email?: string | null
+          id?: never
+          nombre?: string
+          ruc?: string | null
+          telefono?: string | null
+          tenant_id?: number
+        }
+        Relationships: []
       }
       reservas: {
         Row: {
@@ -1580,6 +2008,57 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "usuario"
             referencedColumns: ["id_usuario"]
+          },
+        ]
+      }
+      saldos_iniciales_fondos: {
+        Row: {
+          created_at: string
+          estado: string
+          fecha: string
+          fk_cuenta_fondo: number
+          fk_establecimientos: number
+          id: number
+          monto: number
+          observacion: string | null
+          tenant_id: number
+        }
+        Insert: {
+          created_at?: string
+          estado?: string
+          fecha?: string
+          fk_cuenta_fondo: number
+          fk_establecimientos: number
+          id?: never
+          monto: number
+          observacion?: string | null
+          tenant_id?: number
+        }
+        Update: {
+          created_at?: string
+          estado?: string
+          fecha?: string
+          fk_cuenta_fondo?: number
+          fk_establecimientos?: number
+          id?: never
+          monto?: number
+          observacion?: string | null
+          tenant_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "saldos_iniciales_fondos_establecimiento_fkey"
+            columns: ["fk_establecimientos"]
+            isOneToOne: false
+            referencedRelation: "establecimientos"
+            referencedColumns: ["id_establecimiento"]
+          },
+          {
+            foreignKeyName: "saldos_iniciales_fondos_fondo_fkey"
+            columns: ["fk_cuenta_fondo"]
+            isOneToOne: false
+            referencedRelation: "cuentas_fondos"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1664,6 +2143,23 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      tenants: {
+        Row: {
+          ciclo_facturacion: string | null
+          created_at: string
+          estado: string
+          fk_usuario_web: number | null
+          id: number
+          nombre: string
+          plan: string
+          slug: string
+          trial_fin: string | null
+          vigente_hasta: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
       }
       timbrados: {
         Row: {
@@ -1844,6 +2340,67 @@ export type Database = {
         }
         Relationships: []
       }
+      transferencias_fondos: {
+        Row: {
+          created_at: string
+          estado: string
+          fecha: string
+          fk_establecimientos: number
+          fk_fondo_destino: number
+          fk_fondo_origen: number
+          id: number
+          monto: number
+          observacion: string | null
+          tenant_id: number
+        }
+        Insert: {
+          created_at?: string
+          estado?: string
+          fecha?: string
+          fk_establecimientos: number
+          fk_fondo_destino: number
+          fk_fondo_origen: number
+          id?: never
+          monto: number
+          observacion?: string | null
+          tenant_id?: number
+        }
+        Update: {
+          created_at?: string
+          estado?: string
+          fecha?: string
+          fk_establecimientos?: number
+          fk_fondo_destino?: number
+          fk_fondo_origen?: number
+          id?: never
+          monto?: number
+          observacion?: string | null
+          tenant_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transferencias_fondos_destino_fkey"
+            columns: ["fk_fondo_destino"]
+            isOneToOne: false
+            referencedRelation: "cuentas_fondos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transferencias_fondos_establecimiento_fkey"
+            columns: ["fk_establecimientos"]
+            isOneToOne: false
+            referencedRelation: "establecimientos"
+            referencedColumns: ["id_establecimiento"]
+          },
+          {
+            foreignKeyName: "transferencias_fondos_origen_fkey"
+            columns: ["fk_fondo_origen"]
+            isOneToOne: false
+            referencedRelation: "cuentas_fondos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       unidades_medida: {
         Row: {
           cod_unidades_medida: number
@@ -1866,21 +2423,6 @@ export type Database = {
           id_unidades?: never
           representacion?: string
         }
-        Relationships: []
-      }
-      tenants: {
-        Row: {
-          created_at: string
-          estado: string
-          fk_usuario_web: number | null
-          id: number
-          nombre: string
-          plan: string
-          slug: string
-          trial_fin: string | null
-        }
-        Insert: never
-        Update: never
         Relationships: []
       }
       usuario: {
@@ -1948,6 +2490,97 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      fn_cerrar_mes: {
+        Args: { p_anio: number; p_mes: number }
+        Returns: undefined
+      }
+      fn_reabrir_mes: {
+        Args: { p_anio: number; p_mes: number }
+        Returns: undefined
+      }
+      fn_rep_resultado: {
+        Args: { p_desde: string; p_hasta: string }
+        Returns: {
+          mes: string
+          fk_categoria: number
+          categoria: string
+          tipo: string
+          monto: number
+        }[]
+      }
+      fn_rep_cxc: {
+        Args: { p_corte?: string | null }
+        Returns: {
+          fk_cliente: number
+          cliente: string
+          documento: string
+          id_factura: number
+          nro: string
+          fecha_emision: string
+          fecha_vencimiento: string
+          total_general: number
+          saldo_pendiente: number
+          dias_vencido: number
+          bucket: string
+        }[]
+      }
+      fn_rep_cxp: {
+        Args: { p_corte?: string | null }
+        Returns: {
+          fk_proveedor: number
+          proveedor: string
+          ruc: string | null
+          id_gasto: number
+          nro_comprobante: string | null
+          fecha: string
+          fecha_vencimiento: string
+          total: number
+          saldo_pendiente: number
+          dias_vencido: number
+          bucket: string
+        }[]
+      }
+      fn_rep_flujo_fondos: {
+        Args: { p_desde: string; p_hasta: string }
+        Returns: {
+          fk_fondo: number
+          fondo: string
+          tipo: string
+          activo: boolean
+          saldo_inicial: number
+          ingresos: number
+          egresos: number
+          saldo_final: number
+        }[]
+      }
+      fn_rep_movimientos_fondo: {
+        Args: { p_fondo: number; p_desde: string; p_hasta: string }
+        Returns: {
+          fecha: string
+          nro_asiento: number
+          descripcion: string
+          origen_tipo: string
+          fk_origen: number
+          debe: number
+          haber: number
+          saldo_acumulado: number
+        }[]
+      }
+      fn_rep_libro_iva: {
+        Args: { p_anio: number }
+        Returns: {
+          mes: number
+          base_ventas_10: number
+          base_ventas_5: number
+          base_ventas_exentas: number
+          iva_debito: number
+          compras_gravadas_10: number
+          compras_gravadas_5: number
+          compras_exentas: number
+          iva_credito: number
+          iva_a_pagar: number
+        }[]
+      }
       fn_landing_catalogo: {
         Args: { p_slug: string }
         Returns: Json | null

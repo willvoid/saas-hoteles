@@ -113,3 +113,7 @@ export interface LineaFactura {
   ivaRate: number;
   fk_cargo_folio?: number | null;
 }
+
+/** `facturas.condicion_venta`: 1 = contado (cash), 2 = credito. */
+export const CONDICION_VENTA_CONTADO = 1;
+export const CONDICION_VENTA_CREDITO = 2;

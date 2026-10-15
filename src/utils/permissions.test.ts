@@ -3,6 +3,8 @@ import {
   allowedTabs,
   canAssignAdminRole,
   canAssignCleaner,
+  canAccessFinanzas,
+  canAccessTab,
   canBlockRooms,
   canManageUser,
   normalizeRole,
@@ -100,5 +102,31 @@ describe('el limpiador dentro de Estado y limpieza', () => {
     expect(rol).toBe('limpiador');
     expect(canBlockRooms(rol)).toBe(false);
     expect(canAssignCleaner(rol)).toBe(false);
+  });
+});
+
+describe('Finanzas', () => {
+  const on = { contabilidad: true, sifen: false };
+  const off = { contabilidad: false, sifen: false };
+
+  it('only admin and gerente have the finanzas tab', () => {
+    expect(canAccessTab('admin', 'finanzas')).toBe(true);
+    expect(canAccessTab('gerente', 'finanzas')).toBe(true);
+    expect(canAccessTab('recepcionista', 'finanzas')).toBe(false);
+    expect(canAccessTab('limpiador', 'finanzas')).toBe(false);
+    expect(canAccessTab('unknown', 'finanzas')).toBe(false);
+  });
+
+  it('requires the contabilidad module on top of the role', () => {
+    expect(canAccessFinanzas('admin', on)).toBe(true);
+    expect(canAccessFinanzas('gerente', on)).toBe(true);
+    expect(canAccessFinanzas('admin', off)).toBe(false);
+    expect(canAccessFinanzas('gerente', off)).toBe(false);
+  });
+
+  it('denies other roles even when the module is on', () => {
+    expect(canAccessFinanzas('recepcionista', on)).toBe(false);
+    expect(canAccessFinanzas('limpiador', on)).toBe(false);
+    expect(canAccessFinanzas('unknown', on)).toBe(false);
   });
 });

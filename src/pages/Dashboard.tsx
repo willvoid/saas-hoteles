@@ -19,7 +19,8 @@ import {
   Building,
   Package,
   BarChart3,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Landmark
 } from 'lucide-react';
 import ManageClients from './ManageClients';
 import ManageReservations from './ManageReservations';
@@ -46,6 +47,7 @@ import ManageEdificios from './ManageEdificios';
 import ManagePisos from './ManagePisos';
 import ManageProductos from './ManageProductos';
 import ManageReportes from './ManageReportes';
+import Finanzas from './Finanzas';
 import Footer from '../components/Footer';
 import QuickActions from '../components/QuickActions';
 import { Modal } from '../components/Modal';
@@ -57,12 +59,16 @@ import OccupancyChart from '../components/OccupancyChart';
 import { formatGs } from '../utils/currency';
 import { validarMontoTurno, validarTipeoMontoTurno } from '../utils/montoTurno';
 import type { Turno } from '../types/factura';
-import { TabId, normalizeRole, canAccessTab, canAssignCleaner, canBlockRooms, defaultTab } from '../utils/permissions';
+import { TabId, normalizeRole, canAccessTab, canAssignCleaner, canBlockRooms, canAccessFinanzas, defaultTab } from '../utils/permissions';
 import type { User } from '../types/user';
+import type { TenantModulos } from '../services/tenantService';
 import { COLORS, tint } from '../constants/colors';
 
+// The session user also carries the plan modules of its tenant (see TenantInfo).
+type DashboardUser = User & { tenant?: { nombre: string; modulos?: TenantModulos } };
+
 interface DashboardProps {
-  user: User;
+  user: DashboardUser;
   onLogout: () => void;
   // Back to the hotel selector. An open caja turn stays open in this hotel.
   onSwitchHotel?: () => void;
@@ -71,6 +77,7 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) => {
   // Rol normalizado del usuario logueado: define qué módulos puede ver
   const role = normalizeRole(user.cargo);
+  const showFinanzas = canAccessFinanzas(role, user.tenant?.modulos ?? { contabilidad: false });
 
   const [activeTab, setActiveTab] = useState<TabId>(defaultTab(role));
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -88,7 +95,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
   // vuelta al mismo folio con el producto recién creado ya seleccionado.
   const [productosAutoNew, setProductosAutoNew] = useState(false);
   const [folioIdParaVolver, setFolioIdParaVolver] = useState<number | null>(null);
-  const [conceptoRecienCreado, setConceptoRecienCreado] = useState<any | null>(null);
+  const [conceptoRecienCreado, setConceptoRecienCreado] = useState<unknown | null>(null);
   // Consumos que ya estaban cargados en el modal del folio cuando se salió a
   // crear un producto: se restauran al volver, se haya guardado o cancelado.
   const [consumoBorrador, setConsumoBorrador] = useState<BorradorConsumo | null>(null);
@@ -112,10 +119,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
   // que indica a qué formulario volver.
   const [tiposAutoNew, setTiposAutoNew] = useState(false);
   const [habitacionFormPendiente, setHabitacionFormPendiente] = useState<
-    { borrador: HabitacionBorrador; habitacionEnEdicion: any | null } | null
+    { borrador: HabitacionBorrador; habitacionEnEdicion: unknown | null } | null
   >(null);
   const [tarifaFormPendiente, setTarifaFormPendiente] = useState<
-    { borrador: TarifaBorrador; tarifaEnEdicion: any | null } | null
+    { borrador: TarifaBorrador; tarifaEnEdicion: unknown | null } | null
   >(null);
   // Reserva de origen al entrar a un folio desde "Ver folio completo" (detalle
   // de reserva): habilita el botón "Volver a Reserva" en Folios. Sólo se
@@ -382,6 +389,15 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
             >
               <BarChart3 className="icon" size={20} />
               <span>Reportes</span>
+            </button>
+          )}
+          {showFinanzas && (
+            <button
+              className={`nav-item ${activeTab === 'finanzas' ? 'active' : ''}`}
+              onClick={() => navigateTo('finanzas')}
+            >
+              <Landmark className="icon" size={20} />
+              <span>Finanzas</span>
             </button>
           )}
           {canAccessTab(role, 'estado-limpieza') && (
@@ -831,6 +847,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
         {activeTab === 'reportes' && canAccessTab(role, 'reportes') && (
           <div className="module-container">
             <ManageReportes />
+          </div>
+        )}
+
+        {activeTab === 'finanzas' && showFinanzas && (
+          <div className="module-container">
+            <Finanzas />
           </div>
         )}
 
