@@ -2352,3 +2352,76 @@ body::after {
   font-weight: 600;
   color: var(--text-primary);
 }
+
+.fin-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.fin-kpi {
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+
+.fin-kpi-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.fin-kpi-valor {
+  margin-top: 6px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.fin-kpi-nota {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.fin-kpi-positivo .fin-kpi-valor {
+  color: var(--success-light);
+}
+
+.fin-kpi-negativo,
+.fin-kpi-alerta {
+  border-color: var(--error-light);
+}
+
+.fin-kpi-negativo .fin-kpi-valor,
+.fin-kpi-alerta .fin-kpi-valor {
+  color: var(--error-light);
+}
+
+.fin-resumen-listas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 24px;
+}
+
+.fin-reportes-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.fin-tabla-scroll {
+  overflow-x: auto;
+  width: 100%;
+}
+
+.fin-tabla-pie td {
+  font-weight: 700;
+  border-top: 2px solid var(--glass-border);
+  color: var(--text-primary);
+}
