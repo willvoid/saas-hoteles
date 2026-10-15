@@ -1487,6 +1487,738 @@ begin
   perform t.volver();
 end $$;
 
+-- ═══ T4 · 0019 expenses, collections, payments, transfers, opening balances ═══
+
+-- Helpers: thin wrappers over INSERT that return the new id.
+create function t.gasto(
+  p_tenant bigint, p_cond text, p_g10 numeric, p_g5 numeric, p_ex numeric,
+  p_prov bigint, p_fondo bigint, p_cat bigint,
+  p_fecha date default date '2026-03-10', p_comp text default null
+) returns bigint language plpgsql as $$
+declare v_id bigint;
+begin
+  insert into public.gastos
+    (tenant_id, fecha, fk_proveedor, fk_categoria, nro_comprobante,
+     gravado_10, gravado_5, exenta, condicion, fk_cuenta_fondo)
+  values (p_tenant, p_fecha, p_prov, p_cat, p_comp, p_g10, p_g5, p_ex, p_cond, p_fondo)
+  returning id into v_id;
+  return v_id;
+end $$;
+
+create function t.pago(p_tenant bigint, p_gasto bigint, p_fondo bigint, p_monto numeric) returns bigint
+language plpgsql as $$
+declare v_id bigint;
+begin
+  insert into public.pagos (tenant_id, fk_gasto, fk_cuenta_fondo, monto)
+  values (p_tenant, p_gasto, p_fondo, p_monto) returning id into v_id;
+  return v_id;
+end $$;
+
+create function t.cobro(p_tenant bigint, p_factura bigint, p_fondo bigint, p_monto numeric) returns bigint
+language plpgsql as $$
+declare v_id bigint;
+begin
+  insert into public.cobros (tenant_id, fk_factura, fk_cuenta_fondo, monto)
+  values (p_tenant, p_factura, p_fondo, p_monto) returning id into v_id;
+  return v_id;
+end $$;
+
+create function t.transf(p_tenant bigint, p_origen bigint, p_destino bigint, p_monto numeric) returns bigint
+language plpgsql as $$
+declare v_id bigint;
+begin
+  insert into public.transferencias_fondos (tenant_id, fk_fondo_origen, fk_fondo_destino, monto)
+  values (p_tenant, p_origen, p_destino, p_monto) returning id into v_id;
+  return v_id;
+end $$;
+
+create function t.saldo_inicial(p_tenant bigint, p_fondo bigint, p_monto numeric) returns bigint
+language plpgsql as $$
+declare v_id bigint;
+begin
+  insert into public.saldos_iniciales_fondos (tenant_id, fk_cuenta_fondo, monto)
+  values (p_tenant, p_fondo, p_monto) returning id into v_id;
+  return v_id;
+end $$;
+
+-- Net debit minus credit of everything posted to a ledger account (reversals included).
+create function t.saldo_cta(p_tenant bigint, p_cuenta bigint) returns numeric language sql as $$
+  select coalesce(sum(debe - haber), 0) from public.detalle_asientos
+  where tenant_id = p_tenant and fk_cuenta_contables = p_cuenta
+$$;
+
+create function t.saldo_clave(p_tenant bigint, p_clave text) returns numeric language sql as $$
+  select t.saldo_cta(p_tenant, (select id from public.cuentas_contables where tenant_id = p_tenant and clave = p_clave))
+$$;
+
+create function t.cta_fondo(p_fondo bigint) returns bigint language sql as $$
+  select fk_cuenta_contable from public.cuentas_fondos where id = p_fondo
+$$;
+
+-- ─── Fixtures: categories, funds and suppliers ───────────────────────────
+do $$
+declare
+  v_hp bigint := t.g('hp')::bigint; v_hb bigint := t.g('hb')::bigint; v_f bigint;
+begin
+  perform set_config('test.hp_cat_egr', (select id::text from public.categorias_finanzas
+    where tenant_id = v_hp and tipo = 'egreso' and activo order by id limit 1), true);
+  perform set_config('test.hp_cat_egr2', (select id::text from public.categorias_finanzas
+    where tenant_id = v_hp and tipo = 'egreso' and activo order by id offset 1 limit 1), true);
+  perform set_config('test.hp_cat_ing', (select id::text from public.categorias_finanzas
+    where tenant_id = v_hp and tipo = 'ingreso' and activo order by id limit 1), true);
+  perform set_config('test.hb_cat_egr', (select id::text from public.categorias_finanzas
+    where tenant_id = v_hb and tipo = 'egreso' and activo order by id limit 1), true);
+  perform set_config('test.hp_fcaja', (select id::text from public.cuentas_fondos
+    where tenant_id = v_hp and fk_caja = t.g('hp_caja')::bigint), true);
+  perform set_config('test.hb_fcaja', (select id::text from public.cuentas_fondos
+    where tenant_id = v_hb and fk_caja = t.g('hb_caja')::bigint), true);
+
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo, activo)
+    values (v_hp, 'Fondo inactivo', 'banco', false) returning id into v_f;
+  perform set_config('test.hp_finactivo', v_f::text, true);
+
+  insert into public.proveedores (tenant_id, nombre, ruc) values (v_hp, 'Proveedor Uno', '80011111-1')
+    returning id into v_f;
+  perform set_config('test.hp_prov', v_f::text, true);
+  insert into public.proveedores (tenant_id, nombre, ruc) values (v_hb, 'Proveedor Basico', '80022222-2')
+    returning id into v_f;
+  perform set_config('test.hb_prov', v_f::text, true);
+end $$;
+
+-- ─── proveedores ─────────────────────────────────────────────────────────
+do $$
+declare v_hp bigint := t.g('hp')::bigint;
+begin
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.proveedores'::regclass), 'proveedores tiene RLS');
+  perform t.falla(format('insert into public.proveedores (tenant_id, nombre, ruc) values (%s, ''Otro'', ''80011111-1'')', v_hp),
+                  '23505', 'el RUC es unico por hotel');
+  insert into public.proveedores (tenant_id, nombre, ruc) values (v_hp, 'Dos', 'ABC-1');
+  perform t.falla(format('insert into public.proveedores (tenant_id, nombre, ruc) values (%s, ''Tres'', ''abc-1'')', v_hp),
+                  '23505', 'el RUC no distingue mayusculas');
+  insert into public.proveedores (tenant_id, nombre) values (v_hp, 'Sin RUC 1'), (v_hp, 'Sin RUC 2');
+  perform t.ok(true, 'varios proveedores sin RUC conviven');
+  insert into public.proveedores (tenant_id, nombre, ruc) values (t.g('hb')::bigint, 'Mismo RUC otro hotel', '80011111-1');
+  perform t.ok(true, 'el mismo RUC puede existir en otro hotel');
+  perform t.falla(format('insert into public.proveedores (tenant_id, nombre) values (%s, ''  '')', v_hp),
+                  '23514', 'el nombre del proveedor no puede estar vacio');
+  perform t.falla(format('insert into public.proveedores (tenant_id, nombre, ruc) values (%s, ''X'', ''  '')', v_hp),
+                  '23514', 'el RUC informado no puede estar vacio');
+end $$;
+
+-- ─── gastos: posting of cash and credit expenses ─────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cat bigint := t.g('hp_cat_egr')::bigint; v_prov bigint := t.g('hp_prov')::bigint;
+  v_fc bigint := t.g('hp_fcaja')::bigint; v_fb bigint := t.g('hp_fbanco')::bigint;
+  v_cta_caja bigint := t.cta_caja(t.g('hp')::bigint, t.g('hp_caja')::bigint);
+  v_cta_cat bigint := (select fk_cuenta_contable from public.categorias_finanzas where id = t.g('hp_cat_egr')::bigint);
+  v_g bigint; v_a record; v_debe numeric; v_haber numeric;
+begin
+  -- Mix: 10% (IVA 10.000), 5% (IVA 1.000), exempt. Total 181.000.
+  v_g := t.gasto(v_t, 'contado', 110000, 21000, 50000, null, v_fc, v_cat);
+  perform t.ok((select (iva_10, iva_5, total, saldo_pendiente, estado) = (10000, 1000, 181000, 0, 'REGISTRADO')
+                from public.gastos where id = v_g),
+               'el gasto calcula iva_10, iva_5 y total, nace REGISTRADO y sin saldo');
+  perform t.ok((select fk_establecimientos from public.gastos where id = v_g) = v_estab,
+               'sin establecimiento se usa el primero del hotel');
+  perform t.ok(t.n_asientos(v_t, 'gasto', v_g) = 1, 'un gasto de contado genera un asiento');
+  select * into v_a from public.asientos where tenant_id = v_t and origen_tipo = 'gasto' and fk_origen = v_g;
+  perform t.ok(v_a.estado = 'CONTABILIZADO' and v_a.fk_sucursal = v_estab and v_a.descripcion like 'Gasto%'
+               and (v_a.fecha at time zone 'America/Asuncion')::date = date '2026-03-10',
+               'el asiento esta contabilizado, en el establecimiento y con la fecha del gasto');
+  perform t.ok(t.mov_cta(v_t, 'gasto', v_g, v_cta_cat) = 170000, 'debita la cuenta de la categoria por el total sin IVA');
+  perform t.ok(t.mov(v_t, 'gasto', v_g, 'IVA_CREDITO') = 11000, 'debita IVA credito fiscal');
+  perform t.ok(t.mov_cta(v_t, 'gasto', v_g, v_cta_caja) = -181000, 'acredita el fondo que pago por el total');
+  perform t.ok(t.mov(v_t, 'gasto', v_g, 'CXP_PROVEEDORES') = 0, 'un gasto de contado no toca proveedores');
+  select sum(d.debe), sum(d.haber) into v_debe, v_haber
+  from public.detalle_asientos d where d.tenant_id = v_t and d.fk_asientos = v_a.id;
+  perform t.ok(v_debe = 181000 and v_haber = 181000, 'el asiento del gasto balancea');
+
+  -- Only exempt: no VAT line.
+  v_g := t.gasto(v_t, 'contado', 0, 0, 30000, null, v_fb, v_cat);
+  perform t.ok(t.n_lineas(v_t, 'gasto', v_g) = 2 and t.mov(v_t, 'gasto', v_g, 'IVA_CREDITO') = 0
+               and t.mov_cta(v_t, 'gasto', v_g, t.cta_fondo(v_fb)) = -30000,
+               'un gasto solo exento no lleva linea de IVA y acredita el fondo banco');
+  -- Rounding.
+  v_g := t.gasto(v_t, 'contado', 10, 10, 0, null, v_fc, v_cat);
+  perform t.ok((select (iva_10, iva_5, total) = (1, 0, 20) from public.gastos where id = v_g),
+               'el IVA se redondea (10/11 = 1, 10/21 = 0)');
+
+  -- The client cannot spoof the computed columns.
+  insert into public.gastos (tenant_id, fk_categoria, gravado_10, iva_10, iva_5, total, saldo_pendiente, estado, condicion, fk_cuenta_fondo)
+    values (v_t, v_cat, 11000, 999, 999, 1, 77, 'ANULADO', 'contado', v_fc) returning id into v_g;
+  perform t.ok((select (iva_10, iva_5, total, saldo_pendiente, estado) = (1000, 0, 11000, 0, 'REGISTRADO')
+                from public.gastos where id = v_g),
+               'iva, total, saldo y estado enviados por el cliente se ignoran');
+  insert into public.gastos (tenant_id, fk_categoria, fk_proveedor, gravado_10, saldo_pendiente, condicion)
+    values (v_t, v_cat, v_prov, 11000, 5, 'credito') returning id into v_g;
+  perform t.ok((select saldo_pendiente from public.gastos where id = v_g) = 11000,
+               'un gasto a credito nace con saldo igual al total aunque el cliente mande otro');
+
+  -- Credit: accounts payable.
+  v_g := t.gasto(v_t, 'credito', 110000, 21000, 50000, v_prov, null, v_cat);
+  perform t.ok(t.mov(v_t, 'gasto', v_g, 'CXP_PROVEEDORES') = -181000 and t.mov_cta(v_t, 'gasto', v_g, v_cta_caja) = 0
+               and t.mov_cta(v_t, 'gasto', v_g, v_cta_cat) = 170000 and t.mov(v_t, 'gasto', v_g, 'IVA_CREDITO') = 11000,
+               'un gasto a credito acredita proveedores y no un fondo');
+  perform t.ok((select (saldo_pendiente, total) = (181000, 181000) from public.gastos where id = v_g),
+               'un gasto a credito nace con saldo igual al total');
+
+  -- Rules.
+  perform t.falla(format('select t.gasto(%s, ''credito'', 1000, 0, 0, null, null, %s)', v_t, v_cat),
+                  '23514', 'el gasto a credito exige proveedor');
+  perform t.falla(format('select t.gasto(%s, ''credito'', 1000, 0, 0, %s, %s, %s)', v_t, v_prov, v_fc, v_cat),
+                  '23514', 'el gasto a credito no lleva fondo');
+  perform t.falla(format('select t.gasto(%s, ''contado'', 1000, 0, 0, null, null, %s)', v_t, v_cat),
+                  '23514', 'el gasto de contado exige fondo');
+  perform t.falla_con(format('select t.gasto(%s, ''contado'', 1000, 0, 0, null, %s, %s)', v_t, v_fc, t.g('hp_cat_ing')),
+                      '23514', 'egreso', 'la categoria debe ser de egreso');
+  update public.categorias_finanzas set activo = false where id = t.g('hp_cat_egr2')::bigint;
+  perform t.falla_con(format('select t.gasto(%s, ''contado'', 1000, 0, 0, null, %s, %s)', v_t, v_fc, t.g('hp_cat_egr2')),
+                      '23514', 'inactiva', 'la categoria inactiva se rechaza');
+  update public.categorias_finanzas set activo = true where id = t.g('hp_cat_egr2')::bigint;
+  perform t.falla_con(format('select t.gasto(%s, ''contado'', 1000, 0, 0, null, %s, %s)', v_t, t.g('hp_finactivo'), v_cat),
+                      '23514', 'inactivo', 'el fondo inactivo se rechaza');
+  perform t.falla(format('select t.gasto(%s, ''contado'', 0, 0, 0, null, %s, %s)', v_t, v_fc, v_cat),
+                  '23514', 'el total debe ser mayor a cero');
+  perform t.falla(format('select t.gasto(%s, ''contado'', -1000, 5000, 0, null, %s, %s)', v_t, v_fc, v_cat),
+                  '23514', 'los montos no pueden ser negativos');
+  perform t.falla(format('select t.gasto(%s, ''otra'', 1000, 0, 0, null, %s, %s)', v_t, v_fc, v_cat),
+                  '23514', 'la condicion es contado o credito');
+  perform t.falla(format('insert into public.gastos (tenant_id, fecha, fecha_vencimiento, fk_categoria, gravado_10, fk_proveedor, condicion) values (%s, date ''2026-03-10'', date ''2026-03-01'', %s, 1000, %s, ''credito'')',
+                         v_t, v_cat, v_prov),
+                  '23514', 'el vencimiento no puede ser anterior a la fecha');
+
+  -- Another hotel's data cannot be referenced.
+  perform t.falla(format('select t.gasto(%s, ''credito'', 1000, 0, 0, %s, null, %s)', v_t, t.g('hb_prov'), v_cat),
+                  '23503', 'un gasto no usa el proveedor de otro hotel');
+  perform t.falla(format('select t.gasto(%s, ''contado'', 1000, 0, 0, null, %s, %s)', v_t, t.g('hb_fcaja'), v_cat),
+                  '23503', 'un gasto no usa el fondo de otro hotel');
+  perform t.falla(format('select t.gasto(%s, ''contado'', 1000, 0, 0, null, %s, %s)', v_t, v_fc, t.g('hb_cat_egr')),
+                  '23503', 'un gasto no usa la categoria de otro hotel');
+  perform t.falla(format('insert into public.gastos (tenant_id, fk_establecimientos, fk_categoria, gravado_10, condicion, fk_cuenta_fondo) values (%s, %s, %s, 1000, ''contado'', %s)',
+                         v_t, t.g('hb_estab'), v_cat, v_fc),
+                  '23503', 'un gasto no usa el establecimiento de otro hotel');
+end $$;
+
+-- ─── gastos: immutability and annulment ──────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_cat bigint := t.g('hp_cat_egr')::bigint;
+  v_prov bigint := t.g('hp_prov')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint;
+  v_cta_caja bigint := t.cta_caja(t.g('hp')::bigint, t.g('hp_caja')::bigint);
+  v_cta_cat bigint := (select fk_cuenta_contable from public.categorias_finanzas where id = t.g('hp_cat_egr')::bigint);
+  v_g bigint; v_c bigint;
+begin
+  v_g := t.gasto(v_t, 'contado', 110000, 0, 0, null, v_fc, v_cat);
+  v_c := t.gasto(v_t, 'credito', 55000, 0, 0, v_prov, null, v_cat);
+
+  perform t.falla_con(format('update public.gastos set total = 5 where id = %s', v_g), '55000', 'no se pueden modificar',
+                      'el total de un gasto es inmutable');
+  perform t.falla(format('update public.gastos set gravado_10 = 5000 where id = %s', v_g), '55000', 'los importes son inmutables');
+  perform t.falla(format('update public.gastos set exenta = 5000 where id = %s', v_g), '55000', 'la parte exenta es inmutable');
+  perform t.falla(format('update public.gastos set iva_10 = 0 where id = %s', v_g), '55000', 'el IVA es inmutable');
+  perform t.falla(format('update public.gastos set fk_categoria = %s where id = %s', t.g('hp_cat_egr2'), v_g),
+                  '55000', 'la categoria es inmutable');
+  perform t.falla(format('update public.gastos set fk_cuenta_fondo = %s where id = %s', t.g('hp_fbanco'), v_g),
+                  '55000', 'el fondo es inmutable');
+  perform t.falla(format('update public.gastos set fecha = date ''2026-04-01'' where id = %s', v_g),
+                  '55000', 'la fecha es inmutable');
+  perform t.falla(format('update public.gastos set condicion = ''credito'' where id = %s', v_g),
+                  '55000', 'la condicion es inmutable');
+  perform t.falla_con(format('update public.gastos set saldo_pendiente = 0 where id = %s', v_c), '55000', 'saldo pendiente',
+                      'el saldo no se edita a mano en un gasto a credito');
+  perform t.falla(format('update public.gastos set estado = ''REGISTRADO'', fk_categoria = %s where id = %s', t.g('hp_cat_egr2'), v_g),
+                  '55000', 'tampoco se mezcla un cambio de importes con otro de estado');
+
+  update public.gastos set nro_comprobante = '001-001-0000123', observacion = 'nota', fecha_vencimiento = date '2026-05-01'
+    where id = v_c;
+  perform t.ok((select (nro_comprobante, observacion, fecha_vencimiento) = ('001-001-0000123', 'nota', date '2026-05-01')
+                from public.gastos where id = v_c),
+               'nro_comprobante, observacion y fecha_vencimiento se pueden editar');
+  update public.gastos set fk_proveedor = (select id from public.proveedores where tenant_id = v_t and nombre = 'Dos')
+    where id = v_c;
+  perform t.ok((select nombre from public.proveedores where id = (select fk_proveedor from public.gastos where id = v_c)) = 'Dos',
+               'el proveedor se puede corregir');
+  perform t.falla(format('update public.gastos set fk_proveedor = null where id = %s', v_c),
+                  '23514', 'un gasto a credito no puede quedar sin proveedor');
+  perform t.falla(format('update public.gastos set estado = ''OTRO'' where id = %s', v_g), '55000', 'el estado solo puede pasar a ANULADO');
+
+  -- Annulment of a cash expense.
+  update public.gastos set estado = 'ANULADO' where id = v_g;
+  perform t.ok(t.n_asientos(v_t, 'gasto_anulacion', v_g) = 1, 'anular el gasto crea el asiento de reverso');
+  perform t.ok(not exists (select 1 from public.asientos where tenant_id = v_t and fk_origen = v_g
+                           and origen_tipo in ('gasto', 'gasto_anulacion') and estado <> 'ANULADO'),
+               'el asiento del gasto y su reverso quedan ANULADO');
+  perform t.ok(t.mov_cta(v_t, 'gasto', v_g, v_cta_caja) + t.mov_cta(v_t, 'gasto_anulacion', v_g, v_cta_caja) = 0
+               and t.mov_cta(v_t, 'gasto', v_g, v_cta_cat) + t.mov_cta(v_t, 'gasto_anulacion', v_g, v_cta_cat) = 0
+               and t.mov(v_t, 'gasto', v_g, 'IVA_CREDITO') + t.mov(v_t, 'gasto_anulacion', v_g, 'IVA_CREDITO') = 0,
+               'el reverso deja fondo, categoria e IVA en cero');
+  perform t.ok((select (estado, saldo_pendiente) = ('ANULADO', 0) from public.gastos where id = v_g), 'el gasto queda ANULADO');
+  perform t.falla(format('update public.gastos set observacion = ''x'' where id = %s', v_g), '55000', 'un gasto anulado no se modifica');
+  perform t.falla(format('update public.gastos set estado = ''REGISTRADO'' where id = %s', v_g), '55000', 'un gasto anulado no se reactiva');
+  perform t.falla(format('delete from public.gastos where id = %s', v_c), '55000', 'un gasto no se elimina');
+
+  -- Annulment of a credit expense zeroes its balance.
+  update public.gastos set estado = 'ANULADO' where id = v_c;
+  perform t.ok((select saldo_pendiente from public.gastos where id = v_c) = 0
+               and t.mov(v_t, 'gasto', v_c, 'CXP_PROVEEDORES') + t.mov(v_t, 'gasto_anulacion', v_c, 'CXP_PROVEEDORES') = 0
+               and t.n_asientos(v_t, 'gasto_anulacion', v_c) = 1,
+               'anular un gasto a credito pone el saldo en cero y revierte proveedores');
+end $$;
+
+-- ─── pagos ───────────────────────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_cat bigint := t.g('hp_cat_egr')::bigint;
+  v_prov bigint := t.g('hp_prov')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint;
+  v_fb bigint := t.g('hp_fbanco')::bigint;
+  v_cta_caja bigint := t.cta_caja(t.g('hp')::bigint, t.g('hp_caja')::bigint);
+  v_g bigint; v_ctdo bigint; v_p1 bigint; v_p2 bigint; v_p3 bigint;
+begin
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.pagos'::regclass), 'pagos tiene RLS');
+  v_g := t.gasto(v_t, 'credito', 100000, 0, 0, v_prov, null, v_cat);
+
+  v_p1 := t.pago(v_t, v_g, v_fc, 40000);
+  perform t.ok((select saldo_pendiente from public.gastos where id = v_g) = 60000, 'un pago parcial baja el saldo');
+  perform t.ok(t.mov(v_t, 'pago', v_p1, 'CXP_PROVEEDORES') = 40000 and t.mov_cta(v_t, 'pago', v_p1, v_cta_caja) = -40000
+               and t.n_asientos(v_t, 'pago', v_p1) = 1,
+               'el pago debita proveedores y acredita el fondo');
+  perform t.ok((select (estado, fecha) = ('REGISTRADO', (now() at time zone 'America/Asuncion')::date) from public.pagos where id = v_p1)
+               and (select fk_sucursal from public.asientos where tenant_id = v_t and origen_tipo = 'pago' and fk_origen = v_p1)
+                   = (select fk_establecimientos from public.gastos where id = v_g),
+               'el pago nace REGISTRADO con fecha de hoy y el asiento usa el establecimiento del gasto');
+
+  perform t.falla_con(format('select t.pago(%s, %s, %s, 60001)', v_t, v_g, v_fc), '23514', 'supera el saldo',
+                      'un pago mayor al saldo se rechaza');
+  perform t.falla(format('select t.pago(%s, %s, %s, 0)', v_t, v_g, v_fc), '23514', 'el monto del pago es positivo');
+  perform t.falla_con(format('select t.pago(%s, %s, %s, 100)', v_t, v_g, t.g('hp_finactivo')), '23514', 'inactivo',
+                      'no se paga con un fondo inactivo');
+  perform t.falla(format('select t.pago(%s, %s, %s, 100)', v_t, v_g, t.g('hb_fcaja')), '23503', 'no se paga con el fondo de otro hotel');
+  perform t.falla(format('select t.pago(%s, 0, %s, 100)', v_t, v_fc), '23503', 'el gasto del pago debe existir');
+
+  v_p2 := t.pago(v_t, v_g, v_fb, 60000);
+  perform t.ok((select saldo_pendiente from public.gastos where id = v_g) = 0
+               and t.mov_cta(v_t, 'pago', v_p2, t.cta_fondo(v_fb)) = -60000,
+               'el pago total deja saldo cero y sale del fondo elegido');
+  perform t.falla_con(format('select t.pago(%s, %s, %s, 1)', v_t, v_g, v_fc), '23514', 'supera el saldo',
+                      'con saldo cero no se paga mas');
+
+  v_ctdo := t.gasto(v_t, 'contado', 11000, 0, 0, null, v_fc, v_cat);
+  perform t.falla_con(format('select t.pago(%s, %s, %s, 100)', v_t, v_ctdo, v_fc), '55000', 'Solo se pagan',
+                      'un gasto de contado no se paga');
+
+  -- Annulling the gasto is blocked while it has active pagos.
+  perform t.falla_con(format('update public.gastos set estado = ''ANULADO'' where id = %s', v_g), '55000', 'Anule primero los pagos',
+                      'no se anula un gasto con pagos activos');
+  perform t.ok((select estado from public.gastos where id = v_g) = 'REGISTRADO', 'el gasto sigue REGISTRADO tras el bloqueo');
+
+  -- Immutability.
+  perform t.falla(format('update public.pagos set monto = 1 where id = %s', v_p1), '55000', 'el monto del pago es inmutable');
+  perform t.falla(format('update public.pagos set fk_cuenta_fondo = %s where id = %s', v_fb, v_p1), '55000', 'el fondo del pago es inmutable');
+  perform t.falla(format('update public.pagos set fk_gasto = %s where id = %s', v_ctdo, v_p1), '55000', 'el gasto del pago es inmutable');
+  perform t.falla(format('update public.pagos set fecha = date ''2026-01-01'' where id = %s', v_p1), '55000', 'la fecha del pago es inmutable');
+  update public.pagos set observacion = 'transferencia 123' where id = v_p1;
+  perform t.ok((select observacion from public.pagos where id = v_p1) = 'transferencia 123', 'la observacion del pago se edita');
+  perform t.falla(format('delete from public.pagos where id = %s', v_p1), '55000', 'un pago no se elimina');
+
+  -- Annulment restores the balance and reverses the entry.
+  update public.pagos set estado = 'ANULADO' where id = v_p2;
+  perform t.ok((select saldo_pendiente from public.gastos where id = v_g) = 60000, 'anular un pago restaura el saldo');
+  perform t.ok(t.n_asientos(v_t, 'pago_anulacion', v_p2) = 1
+               and t.mov_cta(v_t, 'pago', v_p2, t.cta_fondo(v_fb)) + t.mov_cta(v_t, 'pago_anulacion', v_p2, t.cta_fondo(v_fb)) = 0
+               and t.mov(v_t, 'pago', v_p2, 'CXP_PROVEEDORES') + t.mov(v_t, 'pago_anulacion', v_p2, 'CXP_PROVEEDORES') = 0
+               and not exists (select 1 from public.asientos where tenant_id = v_t and fk_origen = v_p2
+                               and origen_tipo in ('pago', 'pago_anulacion') and estado <> 'ANULADO'),
+               'anular un pago revierte el asiento y deja ambos ANULADO');
+  perform t.falla(format('update public.pagos set estado = ''REGISTRADO'' where id = %s', v_p2), '55000', 'un pago anulado no se reactiva');
+  perform t.falla(format('update public.pagos set observacion = ''x'' where id = %s', v_p2), '55000', 'un pago anulado no se modifica');
+
+  -- The restored balance can be paid again, and the annulled amount is not counted.
+  v_p3 := t.pago(v_t, v_g, v_fc, 60000);
+  perform t.ok((select saldo_pendiente from public.gastos where id = v_g) = 0, 'se puede volver a pagar el saldo restaurado');
+
+  -- Once every pago is annulled the gasto can be annulled.
+  update public.pagos set estado = 'ANULADO' where id in (v_p1, v_p3);
+  perform t.ok((select saldo_pendiente from public.gastos where id = v_g) = 100000, 'con todos los pagos anulados el saldo vuelve al total');
+  update public.gastos set estado = 'ANULADO' where id = v_g;
+  perform t.ok((select (estado, saldo_pendiente) = ('ANULADO', 0) from public.gastos where id = v_g), 'sin pagos activos el gasto se anula');
+
+  -- A pago cannot target an annulled gasto.
+  perform t.falla_con(format('select t.pago(%s, %s, %s, 100)', v_t, v_g, v_fc), '55000', 'anulado', 'no se paga un gasto anulado');
+end $$;
+
+-- ─── cobros ──────────────────────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_fc bigint := t.g('hp_fcaja')::bigint; v_fb bigint := t.g('hp_fbanco')::bigint;
+  v_cta_caja bigint := t.cta_caja(t.g('hp')::bigint, t.g('hp_caja')::bigint);
+  v_f bigint; v_ctdo bigint; v_anul bigint; v_c1 bigint; v_c2 bigint;
+begin
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.cobros'::regclass), 'cobros tiene RLS');
+  v_f := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 110000, 0, 0, 10000, 110000);
+
+  v_c1 := t.cobro(v_t, v_f, v_fc, 30000);
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_f) = 80000, 'un cobro parcial baja el saldo de la factura');
+  perform t.ok(t.mov_cta(v_t, 'cobro', v_c1, v_cta_caja) = 30000 and t.mov(v_t, 'cobro', v_c1, 'CXC_CLIENTES') = -30000
+               and t.n_asientos(v_t, 'cobro', v_c1) = 1,
+               'el cobro debita el fondo y acredita deudores por ventas');
+  perform t.ok((select fk_sucursal from public.asientos where tenant_id = v_t and origen_tipo = 'cobro' and fk_origen = v_c1) = v_estab
+               and (select estado from public.cobros where id = v_c1) = 'REGISTRADO',
+               'el cobro nace REGISTRADO y su asiento usa el establecimiento de la factura');
+
+  perform t.falla_con(format('select t.cobro(%s, %s, %s, 80001)', v_t, v_f, v_fc), '23514', 'supera el saldo',
+                      'un cobro mayor al saldo se rechaza');
+  perform t.falla(format('select t.cobro(%s, %s, %s, 0)', v_t, v_f, v_fc), '23514', 'el monto del cobro es positivo');
+  perform t.falla_con(format('select t.cobro(%s, %s, %s, 100)', v_t, v_f, t.g('hp_finactivo')), '23514', 'inactivo',
+                      'no se cobra en un fondo inactivo');
+  perform t.falla(format('select t.cobro(%s, %s, %s, 100)', v_t, v_f, t.g('hb_fcaja')), '23503', 'no se cobra en el fondo de otro hotel');
+  perform t.falla(format('select t.cobro(%s, (select min(id_factura) from public.facturas where tenant_id = %s), %s, 100)', v_t, t.g('hb'), v_fc),
+                  '23503', 'no se cobra una factura de otro hotel');
+
+  v_c2 := t.cobro(v_t, v_f, v_fb, 80000);
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_f) = 0
+               and t.mov_cta(v_t, 'cobro', v_c2, t.cta_fondo(v_fb)) = 80000,
+               'el cobro total deja saldo cero y entra en el fondo elegido');
+  perform t.falla_con(format('select t.cobro(%s, %s, %s, 1)', v_t, v_f, v_fc), '23514', 'supera el saldo', 'con saldo cero no se cobra mas');
+
+  -- Contado and annulled invoices cannot be collected.
+  v_ctdo := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 11000, 0, 0, 1000, 11000);
+  perform t.falla_con(format('select t.cobro(%s, %s, %s, 100)', v_t, v_ctdo, v_fc), '55000', 'Solo se cobran', 'una factura de contado no se cobra');
+  v_anul := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 11000, 0, 0, 1000, 11000);
+  update public.facturas set estado = 'ANULADA', fk_motivo = t.g('motivo')::smallint where id_factura = v_anul;
+  perform t.falla_con(format('select t.cobro(%s, %s, %s, 100)', v_t, v_anul, v_fc), '55000', 'anulada', 'una factura anulada no se cobra');
+
+  -- Invoice annulment is blocked while it has active cobros.
+  perform t.falla_con(format('update public.facturas set estado = ''ANULADA'', fk_motivo = %s where id_factura = %s', t.g('motivo'), v_f),
+                      '55000', 'Anule primero los cobros', 'no se anula una factura con cobros activos');
+  perform t.ok((select (estado, saldo_pendiente) = ('EMITIDA', 0) from public.facturas where id_factura = v_f),
+               'la factura sigue EMITIDA y su saldo intacto tras el bloqueo');
+
+  -- Immutability.
+  perform t.falla(format('update public.cobros set monto = 1 where id = %s', v_c1), '55000', 'el monto del cobro es inmutable');
+  perform t.falla(format('update public.cobros set fk_cuenta_fondo = %s where id = %s', v_fb, v_c1), '55000', 'el fondo del cobro es inmutable');
+  perform t.falla(format('update public.cobros set fk_factura = %s where id = %s', v_ctdo, v_c1), '55000', 'la factura del cobro es inmutable');
+  perform t.falla(format('update public.cobros set fecha = date ''2026-01-01'' where id = %s', v_c1), '55000', 'la fecha del cobro es inmutable');
+  update public.cobros set observacion = 'recibo 55' where id = v_c1;
+  perform t.ok((select observacion from public.cobros where id = v_c1) = 'recibo 55', 'la observacion del cobro se edita');
+  perform t.falla(format('delete from public.cobros where id = %s', v_c1), '55000', 'un cobro no se elimina');
+
+  -- Annulment restores the balance and reverses the entry.
+  update public.cobros set estado = 'ANULADO' where id = v_c2;
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_f) = 80000, 'anular un cobro restaura el saldo');
+  perform t.ok(t.n_asientos(v_t, 'cobro_anulacion', v_c2) = 1
+               and t.mov_cta(v_t, 'cobro', v_c2, t.cta_fondo(v_fb)) + t.mov_cta(v_t, 'cobro_anulacion', v_c2, t.cta_fondo(v_fb)) = 0
+               and t.mov(v_t, 'cobro', v_c2, 'CXC_CLIENTES') + t.mov(v_t, 'cobro_anulacion', v_c2, 'CXC_CLIENTES') = 0
+               and not exists (select 1 from public.asientos where tenant_id = v_t and fk_origen = v_c2
+                               and origen_tipo in ('cobro', 'cobro_anulacion') and estado <> 'ANULADO'),
+               'anular un cobro revierte el asiento y deja ambos ANULADO');
+  perform t.falla(format('update public.cobros set estado = ''REGISTRADO'' where id = %s', v_c2), '55000', 'un cobro anulado no se reactiva');
+  perform t.falla_con(format('update public.facturas set estado = ''ANULADA'' where id_factura = %s', v_f), '55000', 'Anule primero los cobros',
+                      'con un cobro activo restante la factura sigue sin poder anularse');
+
+  update public.cobros set estado = 'ANULADO' where id = v_c1;
+  perform t.ok((select saldo_pendiente from public.facturas where id_factura = v_f) = 110000, 'con todos los cobros anulados el saldo vuelve al total');
+  update public.facturas set estado = 'ANULADA', fk_motivo = t.g('motivo')::smallint where id_factura = v_f;
+  perform t.ok((select (estado, saldo_pendiente) = ('ANULADA', 0) from public.facturas where id_factura = v_f)
+               and t.n_asientos(v_t, 'factura_anulacion', v_f) = 1,
+               'sin cobros activos la factura se anula (saldo cero y reverso)');
+end $$;
+
+-- ─── Factura guard ───────────────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_estab bigint := t.g('hp_estab')::bigint;
+  v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_ctdo bigint; v_cred bigint;
+begin
+  v_ctdo := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 110000, 0, 0, 10000, 110000);
+  v_cred := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 110000, 0, 0, 10000, 110000);
+
+  perform t.falla_con(format('update public.facturas set total_general = 1 where id_factura = %s', v_ctdo), '55000', 'no se pueden modificar',
+                      'el total de una factura emitida es inmutable');
+  perform t.falla(format('update public.facturas set total_iva = 0 where id_factura = %s', v_ctdo), '55000', 'el IVA de la factura es inmutable');
+  perform t.falla(format('update public.facturas set total_gravado_10 = 1 where id_factura = %s', v_ctdo), '55000', 'el gravado de la factura es inmutable');
+  perform t.falla(format('update public.facturas set condicion_venta = 2 where id_factura = %s', v_ctdo), '55000', 'la condicion de venta es inmutable');
+  perform t.falla(format('update public.facturas set fk_modo_pago = %s where id_factura = %s', t.g('m_tar'), v_ctdo), '55000', 'el modo de pago es inmutable');
+  perform t.falla(format('update public.facturas set fk_turno = %s where id_factura = %s', t.g('hb_turno'), v_ctdo), '55000', 'el turno es inmutable');
+  perform t.falla_con(format('update public.facturas set saldo_pendiente = 0 where id_factura = %s', v_cred), '55000', 'saldo pendiente',
+                      'el saldo de una factura a credito no se edita a mano');
+  perform t.falla(format('update public.facturas set saldo_pendiente = 500 where id_factura = %s', v_ctdo), '55000',
+                  'el saldo de una factura de contado no se edita a mano');
+  perform t.ok((select (total_general, saldo_pendiente) = (110000, 0) from public.facturas where id_factura = v_ctdo)
+               and (select saldo_pendiente from public.facturas where id_factura = v_cred) = 110000,
+               'los intentos rechazados no cambiaron nada');
+
+  -- Free fields and the app's annulment still work.
+  update public.facturas set fecha_vencimiento = date '2026-12-31', observacion = 'nota' where id_factura = v_cred;
+  perform t.ok((select (fecha_vencimiento, observacion) = (date '2026-12-31', 'nota') from public.facturas where id_factura = v_cred),
+               'fecha_vencimiento y observacion siguen editables');
+  update public.facturas set estado = 'ANULADA', fk_motivo = t.g('motivo')::smallint, saldo_pendiente = 5 where id_factura = v_cred;
+  perform t.ok((select (estado, saldo_pendiente) = ('ANULADA', 0) from public.facturas where id_factura = v_cred),
+               'anular una factura (estado + motivo) funciona y fuerza saldo cero');
+  update public.facturas set estado = 'ANULADA', fk_motivo = t.g('motivo')::smallint where id_factura = v_ctdo;
+  perform t.ok((select estado from public.facturas where id_factura = v_ctdo) = 'ANULADA', 'anular una factura de contado funciona');
+
+  -- Same through the app path: receptionist (RLS) client.
+  v_ctdo := t.factura(v_t, v_estab, v_cli, v_turno, t.g('m_efe')::bigint, 1, 55000, 0, 0, 5000, 55000);
+  v_cred := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 55000, 0, 0, 5000, 55000);
+  perform t.actuar(t.g('hp_rec'), v_t);
+  perform t.falla(format('update public.facturas set total_general = 1 where id_factura = %s', v_ctdo), '55000', 'la recepcionista no edita totales');
+  perform t.falla(format('update public.facturas set saldo_pendiente = 0 where id_factura = %s', v_cred), '55000', 'la recepcionista no edita el saldo');
+  perform t.falla(format('update public.facturas set condicion_venta = 1, fk_modo_pago = %s where id_factura = %s', t.g('m_efe'), v_cred),
+                  '55000', 'la recepcionista no cambia credito a contado');
+  perform t.filas(format('update public.facturas set estado = ''ANULADA'', fk_motivo = %s where id_factura = %s', t.g('motivo'), v_ctdo),
+                  1, 'la recepcionista anula con estado y motivo (flujo de la app)');
+  perform t.volver();
+end $$;
+
+-- ─── transferencias_fondos ───────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_fc bigint := t.g('hp_fcaja')::bigint; v_fb bigint := t.g('hp_fbanco')::bigint;
+  v_cc bigint := t.cta_fondo(t.g('hp_fcaja')::bigint); v_cb bigint := t.cta_fondo(t.g('hp_fbanco')::bigint);
+  v_x bigint; v_antes_c numeric; v_antes_b numeric;
+begin
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.transferencias_fondos'::regclass), 'transferencias_fondos tiene RLS');
+  v_antes_c := t.saldo_cta(v_t, v_cc); v_antes_b := t.saldo_cta(v_t, v_cb);
+
+  v_x := t.transf(v_t, v_fc, v_fb, 50000);
+  perform t.ok(t.mov_cta(v_t, 'transferencia', v_x, v_cb) = 50000 and t.mov_cta(v_t, 'transferencia', v_x, v_cc) = -50000
+               and t.n_lineas(v_t, 'transferencia', v_x) = 2,
+               'la transferencia debita el destino y acredita el origen');
+  perform t.ok(t.saldo_cta(v_t, v_cc) = v_antes_c - 50000 and t.saldo_cta(v_t, v_cb) = v_antes_b + 50000,
+               'los saldos de ambos fondos se mueven por el monto');
+  perform t.ok((select (estado, fecha) = ('REGISTRADO', (now() at time zone 'America/Asuncion')::date)
+                from public.transferencias_fondos where id = v_x)
+               and (select fk_establecimientos from public.transferencias_fondos where id = v_x) = t.g('hp_estab')::bigint,
+               'la transferencia nace REGISTRADA, con fecha de hoy y el establecimiento por defecto');
+
+  perform t.falla(format('select t.transf(%s, %s, %s, 100)', v_t, v_fc, v_fc), '23514', 'origen y destino deben ser distintos');
+  perform t.falla(format('select t.transf(%s, %s, %s, 0)', v_t, v_fc, v_fb), '23514', 'el monto de la transferencia es positivo');
+  perform t.falla_con(format('select t.transf(%s, %s, %s, 100)', v_t, v_fc, t.g('hp_finactivo')), '23514', 'inactivo', 'el destino debe estar activo');
+  perform t.falla_con(format('select t.transf(%s, %s, %s, 100)', v_t, t.g('hp_finactivo'), v_fb), '23514', 'inactivo', 'el origen debe estar activo');
+  perform t.falla(format('select t.transf(%s, %s, %s, 100)', v_t, v_fc, t.g('hb_fcaja')), '23503', 'no se transfiere a un fondo de otro hotel');
+
+  perform t.falla(format('update public.transferencias_fondos set monto = 1 where id = %s', v_x), '55000', 'el monto de la transferencia es inmutable');
+  perform t.falla(format('update public.transferencias_fondos set fk_fondo_destino = %s where id = %s', t.g('hp_fcaja'), v_x), '55000',
+                  'el destino de la transferencia es inmutable');
+  update public.transferencias_fondos set observacion = 'ajuste' where id = v_x;
+  perform t.ok((select observacion from public.transferencias_fondos where id = v_x) = 'ajuste', 'la observacion de la transferencia se edita');
+  perform t.falla(format('delete from public.transferencias_fondos where id = %s', v_x), '55000', 'una transferencia no se elimina');
+
+  update public.transferencias_fondos set estado = 'ANULADO' where id = v_x;
+  perform t.ok(t.n_asientos(v_t, 'transferencia_anulacion', v_x) = 1
+               and t.saldo_cta(v_t, v_cc) = v_antes_c and t.saldo_cta(v_t, v_cb) = v_antes_b
+               and not exists (select 1 from public.asientos where tenant_id = v_t and fk_origen = v_x
+                               and origen_tipo in ('transferencia', 'transferencia_anulacion') and estado <> 'ANULADO'),
+               'anular la transferencia revierte el asiento y devuelve los saldos');
+  perform t.falla(format('update public.transferencias_fondos set estado = ''REGISTRADO'' where id = %s', v_x), '55000',
+                  'una transferencia anulada no se reactiva');
+end $$;
+
+-- ─── saldos_iniciales_fondos ─────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_f bigint; v_f2 bigint; v_cta bigint; v_s bigint; v_s2 bigint; v_antes numeric;
+begin
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.saldos_iniciales_fondos'::regclass), 'saldos_iniciales_fondos tiene RLS');
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Banco Apertura', 'banco') returning id into v_f;
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Caja chica apertura', 'caja_chica') returning id into v_f2;
+  v_cta := t.cta_fondo(v_f);
+
+  v_s := t.saldo_inicial(v_t, v_f, 1000000);
+  perform t.ok(t.mov_cta(v_t, 'saldo_inicial', v_s, v_cta) = 1000000 and t.mov(v_t, 'saldo_inicial', v_s, 'SALDOS_INICIALES') = -1000000
+               and t.n_asientos(v_t, 'saldo_inicial', v_s) = 1 and t.saldo_cta(v_t, v_cta) = 1000000,
+               'el saldo inicial debita el fondo y acredita saldos iniciales');
+  perform t.ok((select (estado, fecha) = ('REGISTRADO', (now() at time zone 'America/Asuncion')::date)
+                from public.saldos_iniciales_fondos where id = v_s),
+               'el saldo inicial nace REGISTRADO y con fecha de hoy');
+  perform t.falla(format('select t.saldo_inicial(%s, %s, 5)', v_t, v_f), '23505', 'un fondo tiene un solo saldo inicial activo');
+  perform t.falla(format('select t.saldo_inicial(%s, %s, -1)', v_t, v_f2), '23514', 'el saldo inicial no es negativo');
+  perform t.falla(format('select t.saldo_inicial(%s, %s, 5)', v_t, t.g('hp_finactivo')), '23514', 'no se abre un fondo inactivo');
+  perform t.falla(format('select t.saldo_inicial(%s, %s, 5)', v_t, t.g('hb_fcaja')), '23503', 'no se abre el fondo de otro hotel');
+  perform t.falla(format('update public.saldos_iniciales_fondos set monto = 1 where id = %s', v_s), '55000', 'el monto del saldo inicial es inmutable');
+  perform t.falla(format('delete from public.saldos_iniciales_fondos where id = %s', v_s), '55000', 'un saldo inicial no se elimina');
+
+  update public.saldos_iniciales_fondos set estado = 'ANULADO' where id = v_s;
+  perform t.ok(t.n_asientos(v_t, 'saldo_inicial_anulacion', v_s) = 1 and t.saldo_cta(v_t, v_cta) = 0
+               and not exists (select 1 from public.asientos where tenant_id = v_t and fk_origen = v_s
+                               and origen_tipo in ('saldo_inicial', 'saldo_inicial_anulacion') and estado <> 'ANULADO'),
+               'anular el saldo inicial lo revierte y deja el fondo en cero');
+  v_s2 := t.saldo_inicial(v_t, v_f, 750000);
+  perform t.ok(t.saldo_cta(v_t, v_cta) = 750000, 'tras anular se puede cargar otro saldo inicial del fondo');
+
+  -- Opening balance of zero posts nothing and can still be annulled.
+  v_s := t.saldo_inicial(v_t, v_f2, 0);
+  perform t.ok(t.n_asientos(v_t, 'saldo_inicial', v_s) = 0, 'un saldo inicial en cero no genera asiento');
+  update public.saldos_iniciales_fondos set estado = 'ANULADO' where id = v_s;
+  perform t.ok((select estado from public.saldos_iniciales_fondos where id = v_s) = 'ANULADO'
+               and t.n_asientos(v_t, 'saldo_inicial_anulacion', v_s) = 0,
+               'anular un saldo inicial en cero funciona sin reverso');
+end $$;
+
+-- ─── Fund balance consistency ────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_cat bigint := t.g('hp_cat_egr')::bigint; v_prov bigint := t.g('hp_prov')::bigint;
+  v_estab bigint := t.g('hp_estab')::bigint; v_cli bigint := t.g('hp_cli')::bigint; v_turno bigint := t.g('hp_turno')::bigint;
+  v_fc bigint := t.g('hp_fcaja')::bigint;
+  v_f bigint; v_cta bigint; v_g bigint; v_gc bigint; v_fa bigint; v_x1 bigint; v_x2 bigint; v_p bigint; v_c bigint;
+  v_ga bigint; v_deb numeric; v_hab numeric;
+begin
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Banco Consistencia', 'banco') returning id into v_f;
+  v_cta := t.cta_fondo(v_f);
+
+  perform t.saldo_inicial(v_t, v_f, 1000000);                                    -- +1.000.000
+  v_g  := t.gasto(v_t, 'contado', 110000, 21000, 50000, null, v_f, v_cat);       -- -181.000
+  v_x1 := t.transf(v_t, v_fc, v_f, 200000);                                      -- +200.000
+  v_x2 := t.transf(v_t, v_f, v_fc, 50000);                                       -- -50.000 (annulled below)
+  update public.transferencias_fondos set estado = 'ANULADO' where id = v_x2;
+  v_ga := t.gasto(v_t, 'contado', 11000, 0, 0, null, v_f, v_cat);                -- -11.000 (annulled below)
+  update public.gastos set estado = 'ANULADO' where id = v_ga;
+  v_gc := t.gasto(v_t, 'credito', 90000, 0, 0, v_prov, null, v_cat);
+  v_p  := t.pago(v_t, v_gc, v_f, 40000);                                         -- -40.000
+  v_fa := t.factura(v_t, v_estab, v_cli, v_turno, null, 2, 77000, 0, 0, 7000, 77000);
+  v_c  := t.cobro(v_t, v_fa, v_f, 30000);                                        -- +30.000
+
+  perform t.ok(t.saldo_cta(v_t, v_cta) = 1000000 - 181000 + 200000 - 40000 + 30000,
+               'el saldo del fondo (debe - haber de su cuenta) coincide con lo esperado tras el escenario');
+  perform t.ok((select saldo_pendiente from public.gastos where id = v_gc) = 50000
+               and (select saldo_pendiente from public.facturas where id_factura = v_fa) = 47000,
+               'los saldos de gasto y factura coinciden con pagos y cobros activos');
+
+  select coalesce(sum(debe), 0), coalesce(sum(haber), 0) into v_deb, v_hab
+  from public.detalle_asientos where tenant_id = v_t;
+  perform t.ok(v_deb = v_hab and v_deb > 0, 'el libro diario del hotel balancea (debe = haber)');
+  perform t.ok(-t.saldo_clave(v_t, 'CXP_PROVEEDORES') = (select coalesce(sum(saldo_pendiente), 0) from public.gastos
+                                                           where tenant_id = v_t and condicion = 'credito' and estado = 'REGISTRADO'),
+               'proveedores (cuenta) coincide con la suma de saldos de gastos a credito');
+  perform t.ok(t.saldo_clave(v_t, 'CXC_CLIENTES') = (select coalesce(sum(saldo_pendiente), 0) from public.facturas
+                                                       where tenant_id = v_t and condicion_venta = 2 and estado = 'EMITIDA'),
+               'deudores por ventas (cuenta) coincide con la suma de saldos de facturas a credito');
+end $$;
+
+-- ─── RLS of the new tables ───────────────────────────────────────────────
+do $$
+declare
+  v_t bigint := t.g('hp')::bigint; v_hb bigint := t.g('hb')::bigint;
+  v_cat bigint := t.g('hp_cat_egr')::bigint; v_prov bigint := t.g('hp_prov')::bigint;
+  v_fc bigint := t.g('hp_fcaja')::bigint; v_fb bigint := t.g('hp_fbanco')::bigint;
+  v_gc bigint; v_fa bigint; v_gb bigint; v_fbn bigint; v_nuevo bigint; v_i int;
+  v_tabla text;
+begin
+  -- Rows to read: a credit gasto and a credit invoice of hp, and rows of hb.
+  v_gc := t.gasto(v_t, 'credito', 55000, 0, 0, v_prov, null, v_cat);
+  v_fa := t.factura(v_t, t.g('hp_estab')::bigint, t.g('hp_cli')::bigint, t.g('hp_turno')::bigint, null, 2, 55000, 0, 0, 5000, 55000);
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_t, 'Banco RLS', 'banco') returning id into v_fbn;
+
+  insert into public.cuentas_fondos (tenant_id, nombre, tipo) values (v_hb, 'Banco basico', 'banco') returning id into v_i;
+  perform set_config('test.hb_fbanco', v_i::text, true);
+  v_gb := t.gasto(v_hb, 'credito', 11000, 0, 0, t.g('hb_prov')::bigint, null, t.g('hb_cat_egr')::bigint);
+  perform t.gasto(v_hb, 'contado', 11000, 0, 0, null, t.g('hb_fcaja')::bigint, t.g('hb_cat_egr')::bigint);
+  -- A credit invoice for hb exists only through a back door (the plan cannot sell on credit).
+  set local session_replication_role = replica;
+  v_i := t.factura(v_hb, t.g('hb_estab')::bigint, t.g('hb_cli')::bigint, t.g('hb_turno')::bigint, null, 2, 11000, 0, 0, 1000, 11000)::int;
+  update public.facturas set saldo_pendiente = 11000 where id_factura = v_i;
+  set local session_replication_role = origin;
+  perform set_config('test.hb_fcred', v_i::text, true);
+
+  -- Receptionist: no read, no write.
+  perform t.actuar(t.g('hp_rec'), v_t);
+  foreach v_tabla in array array['proveedores', 'gastos', 'cobros', 'pagos', 'transferencias_fondos', 'saldos_iniciales_fondos'] loop
+    perform t.ok(t.cuenta(format('select count(*) from public.%I', v_tabla)) = 0, 'la recepcionista no lee ' || v_tabla);
+  end loop;
+  perform t.falla('insert into public.proveedores (nombre) values (''Rec'')', '42501', 'la recepcionista no crea proveedores');
+  perform t.falla(format('insert into public.gastos (fk_categoria, gravado_10, condicion, fk_cuenta_fondo) values (%s, 1000, ''contado'', %s)', v_cat, v_fc),
+                  '42501', 'la recepcionista no registra gastos');
+  perform t.falla(format('insert into public.pagos (fk_gasto, fk_cuenta_fondo, monto) values (%s, %s, 100)', v_gc, v_fc),
+                  '42501', 'la recepcionista no registra pagos');
+  perform t.falla(format('insert into public.cobros (fk_factura, fk_cuenta_fondo, monto) values (%s, %s, 100)', v_fa, v_fc),
+                  '42501', 'la recepcionista no registra cobros');
+  perform t.falla(format('insert into public.transferencias_fondos (fk_fondo_origen, fk_fondo_destino, monto) values (%s, %s, 100)', v_fc, v_fb),
+                  '42501', 'la recepcionista no registra transferencias');
+  perform t.falla(format('insert into public.saldos_iniciales_fondos (fk_cuenta_fondo, monto) values (%s, 100)', v_fbn),
+                  '42501', 'la recepcionista no registra saldos iniciales');
+  perform t.filas('update public.gastos set observacion = ''x''', 0, 'la recepcionista no edita gastos');
+  perform t.volver();
+
+  -- Admin: reads and writes everything of its own hotel, sees nothing of another.
+  perform t.actuar(t.g('hp_admin'), v_t);
+  perform t.ok(t.cuenta('select count(*) from public.gastos') > 0 and t.cuenta('select count(*) from public.proveedores') > 0
+               and t.cuenta('select count(*) from public.pagos') > 0 and t.cuenta('select count(*) from public.cobros') > 0
+               and t.cuenta('select count(*) from public.transferencias_fondos') > 0
+               and t.cuenta('select count(*) from public.saldos_iniciales_fondos') > 0,
+               'el admin lee proveedores, gastos, pagos, cobros, transferencias y saldos iniciales');
+  perform t.ok(t.cuenta(format('select count(*) from public.gastos where tenant_id = %s', v_hb)) = 0
+               and t.cuenta(format('select count(*) from public.proveedores where tenant_id = %s', v_hb)) = 0,
+               'el admin no ve gastos ni proveedores de otro hotel');
+  perform t.filas('insert into public.proveedores (nombre, ruc) values (''Prov Admin'', ''ADM-1'')', 1, 'el admin crea un proveedor');
+  perform t.filas(format('insert into public.gastos (fk_categoria, gravado_10, condicion, fk_cuenta_fondo) values (%s, 11000, ''contado'', %s)', v_cat, v_fc),
+                  1, 'el admin registra un gasto (y se contabiliza)');
+  perform t.filas(format('insert into public.pagos (fk_gasto, fk_cuenta_fondo, monto) values (%s, %s, 5000)', v_gc, v_fc), 1, 'el admin registra un pago');
+  perform t.filas(format('insert into public.cobros (fk_factura, fk_cuenta_fondo, monto) values (%s, %s, 5000)', v_fa, v_fc), 1, 'el admin registra un cobro');
+  perform t.filas(format('insert into public.transferencias_fondos (fk_fondo_origen, fk_fondo_destino, monto) values (%s, %s, 1000)', v_fc, v_fb),
+                  1, 'el admin registra una transferencia');
+  perform t.filas(format('insert into public.saldos_iniciales_fondos (fk_cuenta_fondo, monto) values (%s, 100)', v_fbn),
+                  1, 'el admin registra un saldo inicial');
+  perform t.filas(format('update public.pagos set estado = ''ANULADO'' where fk_gasto = %s', v_gc), 1, 'el admin anula un pago');
+  perform t.filas(format('update public.cobros set estado = ''ANULADO'' where fk_factura = %s', v_fa), 1, 'el admin anula un cobro');
+  perform t.falla(format('delete from public.gastos where fk_categoria = %s', v_cat), '55000', 'ni el admin elimina gastos');
+  perform t.volver();
+
+  -- Manager can write too.
+  perform t.actuar(t.g('hp_ger'), v_t);
+  perform t.ok(t.cuenta('select count(*) from public.gastos') > 0, 'el gerente lee gastos');
+  perform t.filas('insert into public.proveedores (nombre) values (''Prov Gerente'')', 1, 'el gerente crea un proveedor');
+  perform t.filas(format('insert into public.gastos (fk_categoria, gravado_10, condicion, fk_cuenta_fondo) values (%s, 11000, ''contado'', %s)', v_cat, v_fc),
+                  1, 'el gerente registra un gasto');
+  perform t.filas(format('insert into public.pagos (fk_gasto, fk_cuenta_fondo, monto) values (%s, %s, 1000)', v_gc, v_fc), 1, 'el gerente registra un pago');
+  perform t.filas(format('insert into public.cobros (fk_factura, fk_cuenta_fondo, monto) values (%s, %s, 1000)', v_fa, v_fc), 1, 'el gerente registra un cobro');
+  perform t.volver();
+
+  -- Plan basico: reads its own rows, writes nothing (module contabilidad).
+  perform t.actuar(t.g('hb_admin'), v_hb);
+  perform t.ok(t.cuenta('select count(*) from public.gastos') = 2 and t.cuenta('select count(*) from public.proveedores') = 2,
+               'el admin del plan basico lee sus gastos y proveedores');
+  perform t.falla('insert into public.proveedores (nombre) values (''Basico'')', '42501', 'el plan basico no crea proveedores');
+  perform t.falla(format('insert into public.gastos (fk_categoria, gravado_10, condicion, fk_cuenta_fondo) values (%s, 1000, ''contado'', %s)',
+                         t.g('hb_cat_egr'), t.g('hb_fcaja')),
+                  '42501', 'el plan basico no registra gastos');
+  perform t.falla(format('insert into public.pagos (fk_gasto, fk_cuenta_fondo, monto) values (%s, %s, 100)', v_gb, t.g('hb_fcaja')),
+                  '42501', 'el plan basico no registra pagos');
+  perform t.falla(format('insert into public.cobros (fk_factura, fk_cuenta_fondo, monto) values (%s, %s, 100)', t.g('hb_fcred'), t.g('hb_fcaja')),
+                  '42501', 'el plan basico no registra cobros');
+  perform t.falla(format('insert into public.transferencias_fondos (fk_fondo_origen, fk_fondo_destino, monto) values (%s, %s, 100)',
+                         t.g('hb_fcaja'), t.g('hb_fbanco')),
+                  '42501', 'el plan basico no registra transferencias');
+  perform t.falla(format('insert into public.saldos_iniciales_fondos (fk_cuenta_fondo, monto) values (%s, 100)', t.g('hb_fbanco')),
+                  '42501', 'el plan basico no registra saldos iniciales');
+  perform t.filas('update public.gastos set observacion = ''x''', 0, 'el plan basico no edita gastos');
+  perform t.volver();
+
+  -- Anonymous: no access.
+  perform t.anonimo();
+  perform t.falla('select count(*) from public.gastos', '42501', 'anon no lee gastos');
+  perform t.falla('select count(*) from public.proveedores', '42501', 'anon no lee proveedores');
+  perform t.falla('select count(*) from public.cobros', '42501', 'anon no lee cobros');
+  perform t.falla('select count(*) from public.pagos', '42501', 'anon no lee pagos');
+  perform t.falla('select count(*) from public.transferencias_fondos', '42501', 'anon no lee transferencias');
+  perform t.falla('select count(*) from public.saldos_iniciales_fondos', '42501', 'anon no lee saldos iniciales');
+  perform t.volver();
+
+  -- Internal functions are not callable by the client.
+  perform t.ok(not has_function_privilege('authenticated', 'public.fn_reversar_documento(bigint, text, bigint)', 'execute')
+               and not has_function_privilege('anon', 'public.fn_reversar_documento(bigint, text, bigint)', 'execute')
+               and not has_function_privilege('authenticated', 'public.tg_fn_cobro_contabilizar()', 'execute')
+               and not has_function_privilege('authenticated', 'public.tg_fn_factura_guarda()', 'execute')
+               and not has_function_privilege('authenticated', 'public.tg_fn_documento_guarda()', 'execute')
+               and not has_function_privilege('authenticated', 'public.fn_contabilizar_reverso(bigint, text, bigint, date)', 'execute'),
+               'las funciones internas de 0019 no se pueden ejecutar desde el cliente');
+end $$;
+
 -- ═══ FIN (later tasks add their sections before this line) ═══
 
 select 'TODAS LAS PRUEBAS DE FINANZAS PASARON' as resultado;
