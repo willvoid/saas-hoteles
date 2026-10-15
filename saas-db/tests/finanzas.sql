@@ -3,7 +3,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Runs in one transaction that is rolled back at the end: it leaves nothing behind.
 --
--- Requirements: migrations 0001-0016 (or whatever the sections cover) and
+-- Requirements: migrations 0001-0017 (or whatever the sections cover) and
 -- supabase/seed.sql applied.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/finanzas.sql
@@ -15,7 +15,7 @@
 --      set_config('test.<key>') and read with t.g('<key>').
 --   3. One section per migration, each in its own `do $$` block:
 --        T1 (0016) accounting base  <- this one
---        T2 (0017) chart of accounts and categories      (pending)
+--        T2 (0017) chart of accounts and categories
 --        T3 (0018) funds and credit invoices             (pending)
 --        T4 (0019) expenses, collections, payments, transfers (pending)
 --        T5 (0020) month lock                            (pending)
@@ -163,6 +163,12 @@ begin
 
   foreach v_plan in array array['pro', 'basico'] loop
     v_t := t.g(v_plan)::bigint;
+    -- Since 0017 provisioning copies the full hotel chart; the T1 sections want
+    -- this small one, so the copied chart (and its categories) is dropped first.
+    if to_regclass('public.categorias_finanzas') is not null then
+      delete from public.categorias_finanzas where tenant_id = v_t;
+    end if;
+    delete from public.cuentas_contables where tenant_id = v_t;
     insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable)
       values (v_t, 'Activo', '1', v_tipo, false) returning id into v_padre;
     insert into public.cuentas_contables (tenant_id, nombre, codigo, fk_tipo_cuenta, imputable, fk_cuenta_padre, clave) values
@@ -621,6 +627,312 @@ do $$
 begin
   perform t.ok(obj_description('public.saldos_mensuales'::regclass, 'pg_class') ilike '%unused%',
                'saldos_mensuales queda documentada como sin uso');
+end $$;
+
+-- ═══ T2 · 0017 hotel chart of accounts and categories ══════════════════════
+
+-- ─── tipo_cuenta_contable catalog ────────────────────────────────────────
+do $$
+declare v_n text;
+begin
+  foreach v_n in array array['Activo', 'Pasivo', 'Patrimonio', 'Ingreso', 'Egreso'] loop
+    perform t.ok(exists (select 1 from public.tipo_cuenta_contable where nombre = v_n),
+                 'el catalogo tiene el tipo ' || v_n);
+  end loop;
+  -- The T1 fixture inserted a second 'Activo' on purpose; the seed itself added one each.
+  perform t.ok(t.cuenta('select count(*) from public.tipo_cuenta_contable where nombre in (''Pasivo'', ''Patrimonio'', ''Ingreso'', ''Egreso'')') = 4,
+               'el seed no duplica los tipos de cuenta');
+end $$;
+
+-- ─── Template chart is a valid tree ──────────────────────────────────────
+do $$
+declare
+  v_pl bigint := (select id from public.tenants where slug = 'plantilla-base');
+  v_k  text;
+  v_mal bigint;
+begin
+  perform t.ok(v_pl is not null, 'existe el tenant plantilla-base');
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', v_pl)) = 35,
+               'la plantilla tiene las 35 cuentas del plan hotelero');
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s and fk_cuenta_padre is null', v_pl)) = 5,
+               'la plantilla tiene 5 raices (Activo, Pasivo, Patrimonio, Ingresos, Egresos)');
+
+  foreach v_k in array array['DISPONIBILIDADES', 'CXC_CLIENTES', 'IVA_CREDITO', 'CXP_PROVEEDORES',
+                             'IVA_DEBITO', 'SALDOS_INICIALES', 'VENTAS_10', 'VENTAS_5',
+                             'VENTAS_EXENTAS', 'OTROS_INGRESOS', 'OTROS_EGRESOS'] loop
+    perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s and clave = %L', v_pl, v_k)) = 1,
+                 'la plantilla tiene exactamente una cuenta con clave ' || v_k);
+  end loop;
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s and clave is not null', v_pl)) = 11,
+               'la plantilla no tiene otras claves de sistema');
+
+  -- Only leaves are imputable. Disponibilidades is the one non-imputable leaf:
+  -- it is a parent waiting for the fund accounts of 0018.
+  select count(*) into v_mal from public.cuentas_contables c
+  where c.tenant_id = v_pl
+    and c.imputable is distinct from (
+      not exists (select 1 from public.cuentas_contables h where h.tenant_id = v_pl and h.fk_cuenta_padre = c.id)
+      and c.clave is distinct from 'DISPONIBILIDADES');
+  perform t.ok(v_mal = 0, 'solo las hojas son imputables y todas las hojas (salvo Disponibilidades) lo son');
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s and imputable', v_pl)) = 24,
+               'la plantilla tiene 24 cuentas imputables');
+
+  -- Parent code is the code minus its last segment; type follows the first digit.
+  select count(*) into v_mal from public.cuentas_contables c
+  left join public.cuentas_contables p on p.tenant_id = c.tenant_id and p.id = c.fk_cuenta_padre
+  where c.tenant_id = v_pl
+    and (case when position('.' in c.codigo) = 0 then c.fk_cuenta_padre is not null
+              else p.codigo is distinct from regexp_replace(c.codigo, '\.[^.]*$', '') end);
+  perform t.ok(v_mal = 0, 'cada cuenta cuelga del padre que indica su codigo');
+
+  select count(*) into v_mal from public.cuentas_contables c
+  join public.tipo_cuenta_contable tc on tc.id = c.fk_tipo_cuenta
+  where c.tenant_id = v_pl
+    and tc.nombre is distinct from case left(c.codigo, 1)
+      when '1' then 'Activo' when '2' then 'Pasivo' when '3' then 'Patrimonio'
+      when '4' then 'Ingreso' when '5' then 'Egreso' end;
+  perform t.ok(v_mal = 0, 'el tipo de cada cuenta corresponde a su primer digito');
+
+  perform t.ok(not (select imputable from public.cuentas_contables where tenant_id = v_pl and clave = 'DISPONIBILIDADES'),
+               'Disponibilidades es padre no imputable (cuelgan los fondos)');
+  perform t.ok((select codigo from public.cuentas_contables where tenant_id = v_pl and clave = 'DISPONIBILIDADES') = '1.1.01',
+               'Disponibilidades es 1.1.01');
+  perform t.ok(not exists (select 1 from public.cuentas_contables where tenant_id = v_pl and not activo),
+               'todas las cuentas de la plantilla estan activas');
+end $$;
+
+-- ─── Template categories ─────────────────────────────────────────────────
+do $$
+declare
+  v_pl bigint := (select id from public.tenants where slug = 'plantilla-base');
+  v_mal bigint;
+begin
+  perform t.ok(t.cuenta(format('select count(*) from public.categorias_finanzas where tenant_id = %s', v_pl)) = 17,
+               'la plantilla tiene 17 categorias (4 ingresos y 13 egresos)');
+
+  -- Every 4.x/5.x leaf has exactly one category of the right type.
+  select count(*) into v_mal from public.cuentas_contables c
+  where c.tenant_id = v_pl and c.imputable and left(c.codigo, 1) in ('4', '5')
+    and (select count(*) from public.categorias_finanzas k
+         where k.tenant_id = v_pl and k.fk_cuenta_contable = c.id
+           and k.tipo = case left(c.codigo, 1) when '4' then 'ingreso' else 'egreso' end) <> 1;
+  perform t.ok(v_mal = 0, 'cada hoja 4.x/5.x tiene una categoria del tipo correcto');
+
+  -- No category on parents or on balance-sheet accounts.
+  select count(*) into v_mal from public.categorias_finanzas k
+  join public.cuentas_contables c on c.tenant_id = k.tenant_id and c.id = k.fk_cuenta_contable
+  where k.tenant_id = v_pl and (not c.imputable or left(c.codigo, 1) not in ('4', '5'));
+  perform t.ok(v_mal = 0, 'ninguna categoria apunta a una cuenta padre o patrimonial');
+  perform t.ok(not exists (select 1 from public.categorias_finanzas where tenant_id = v_pl and (not es_sistema or not activo)),
+               'las categorias sembradas son de sistema y estan activas');
+  perform t.ok((select k.fk_cuenta_contable from public.categorias_finanzas k
+                where k.tenant_id = v_pl and k.nombre = 'Otros egresos') =
+               (select id from public.cuentas_contables where tenant_id = v_pl and clave = 'OTROS_EGRESOS'),
+               'la categoria Otros egresos apunta a la cuenta OTROS_EGRESOS');
+end $$;
+
+-- ─── New hotel (plan basico) receives chart and categories ───────────────
+do $$
+declare
+  v_contrib bigint := (select min(id_tipo_contribuyente) from public.tipo_contribuyente);
+  v_regimen bigint := (select min(id_regimen) from public.tipo_regimen);
+  v_pl bigint := (select id from public.tenants where slug = 'plantilla-base');
+  v_u uuid := gen_random_uuid(); v_res jsonb; v_t bigint; v_k text; v_mal bigint; v_id bigint;
+begin
+  insert into auth.users (id, email) values (v_u, 'fin-nuevo@f.test');
+  v_res := public.fn_provision_tenant(jsonb_build_object(
+    'tenant', jsonb_build_object('nombre', 'Hotel fin nuevo', 'slug', 'fin-nuevo'),
+    'admin', jsonb_build_object('auth_id', v_u, 'nombre', 'Admin', 'documento', 'F21', 'fk_tipo_doc', 1),
+    'empresa', jsonb_build_object('ruc', '82000021-1', 'razon_social', 'Hotel N',
+                                  'fk_contribuyente', v_contrib, 'fk_regimen', v_regimen),
+    'establecimiento', jsonb_build_object('direccion', 'Calle', 'fk_barrio', 1)));
+  v_t := (v_res ->> 'tenant_id')::bigint;
+  perform public.fn_activar_plan(v_t, 'basico', 'mensual', null, 'test-fin-nuevo');
+  perform set_config('test.nuevo', v_t::text, true);
+  perform t.ok((select plan from public.tenants where id = v_t) = 'basico', 'el hotel nuevo esta en plan basico');
+
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', v_t)) = 35,
+               'el hotel nuevo recibe las 35 cuentas');
+  perform t.ok(not exists (
+    select 1 from public.cuentas_contables c
+    join public.cuentas_contables m on m.tenant_id = v_pl and m.id = c.id
+    where c.tenant_id = v_t), 'los ids del hotel nuevo son propios (no se comparten con la plantilla)');
+
+  -- Same content as the template, parents remapped inside the new hotel.
+  select count(*) into v_mal
+  from public.cuentas_contables o
+  left join public.cuentas_contables n
+    on n.tenant_id = v_t and n.codigo = o.codigo
+  where o.tenant_id = v_pl
+    and (n.id is null
+         or (o.nombre, o.imputable, o.activo, o.clave, o.fk_tipo_cuenta)
+            is distinct from (n.nombre, n.imputable, n.activo, n.clave, n.fk_tipo_cuenta));
+  perform t.ok(v_mal = 0, 'las cuentas copiadas conservan nombre, tipo, imputable, activo y clave');
+
+  select count(*) into v_mal
+  from public.cuentas_contables n
+  left join public.cuentas_contables p on p.tenant_id = n.tenant_id and p.id = n.fk_cuenta_padre
+  where n.tenant_id = v_t
+    and (case when position('.' in n.codigo) = 0 then n.fk_cuenta_padre is not null
+              else p.codigo is distinct from regexp_replace(n.codigo, '\.[^.]*$', '') end);
+  perform t.ok(v_mal = 0, 'el arbol copiado cuelga de padres del mismo hotel');
+
+  foreach v_k in array array['DISPONIBILIDADES', 'CXC_CLIENTES', 'IVA_CREDITO', 'CXP_PROVEEDORES',
+                             'IVA_DEBITO', 'SALDOS_INICIALES', 'VENTAS_10', 'VENTAS_5',
+                             'VENTAS_EXENTAS', 'OTROS_INGRESOS', 'OTROS_EGRESOS'] loop
+    -- Called as a plain statement: a STABLE function inside a subquery would
+    -- run on the snapshot of the whole statement, not of this transaction's inserts.
+    v_id := public.fn_cuenta_por_clave(v_t, v_k);
+    perform t.ok((select clave from public.cuentas_contables where id = v_id) = v_k
+                 and (select tenant_id from public.cuentas_contables where id = v_id) = v_t,
+                 'fn_cuenta_por_clave resuelve ' || v_k || ' en el hotel nuevo');
+  end loop;
+
+  perform t.ok(t.cuenta(format('select count(*) from public.categorias_finanzas where tenant_id = %s', v_t)) = 17,
+               'el hotel nuevo recibe las 17 categorias');
+  select count(*) into v_mal
+  from public.categorias_finanzas k
+  join public.cuentas_contables c on c.id = k.fk_cuenta_contable
+  join public.categorias_finanzas ko on ko.tenant_id = v_pl and ko.nombre = k.nombre
+  join public.cuentas_contables co on co.id = ko.fk_cuenta_contable
+  where k.tenant_id = v_t
+    and (c.tenant_id <> v_t or c.codigo <> co.codigo or k.tipo <> ko.tipo
+         or k.es_sistema <> ko.es_sistema or k.activo <> ko.activo);
+  perform t.ok(v_mal = 0, 'las categorias copiadas apuntan a la cuenta equivalente del hotel nuevo');
+  perform t.ok(exists (select 1 from public.conceptos where tenant_id = v_t and nombre = 'Alojamiento'),
+               'el alta sigue creando el concepto Alojamiento');
+
+  -- The seed helper is a no-op on a hotel that already has accounts.
+  perform public.fn_copiar_plan_cuentas_plantilla(v_t);
+  perform public.fn_seed_tenant_desde_plantilla(v_t);
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', v_t)) = 35
+               and t.cuenta(format('select count(*) from public.categorias_finanzas where tenant_id = %s', v_t)) = 17,
+               'volver a sembrar un hotel con plan de cuentas no cambia nada');
+end $$;
+
+-- ─── Backfill: empty hotel gets the chart, populated hotels are untouched ─
+do $$
+declare
+  v_vacio bigint;
+  v_pro_antes bigint := t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', t.g('pro')));
+  v_pl_antes bigint;
+  r record;
+  v_pasada int;
+  v_cuentas bigint;
+  v_cats bigint;
+begin
+  insert into public.tenants (nombre, slug, estado, plan, trial_fin)
+  values ('Hotel sin plan de cuentas', 'fin-vacio', 'trial', 'trial', current_date + 30)
+  returning id into v_vacio;
+  v_pl_antes := t.cuenta('select count(*) from public.cuentas_contables c join public.tenants t on t.id = c.tenant_id where t.slug = ''plantilla-base''');
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', v_vacio)) = 0,
+               'el hotel de prueba parte sin cuentas');
+
+  -- The backfill statement of 0017, run twice.
+  for v_pasada in 1 .. 2 loop
+    for r in
+      select tt.id from public.tenants tt
+      where tt.slug <> 'plantilla-base'
+        and not exists (select 1 from public.cuentas_contables c where c.tenant_id = tt.id)
+      order by tt.id
+    loop
+      perform public.fn_copiar_plan_cuentas_plantilla(r.id);
+    end loop;
+
+    if v_pasada = 1 then
+      v_cuentas := t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', v_vacio));
+      v_cats := t.cuenta(format('select count(*) from public.categorias_finanzas where tenant_id = %s', v_vacio));
+      perform t.ok(v_cuentas = 35 and v_cats = 17, 'el backfill da al hotel sin cuentas el plan y las categorias');
+    else
+      perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', v_vacio)) = v_cuentas
+                   and t.cuenta(format('select count(*) from public.categorias_finanzas where tenant_id = %s', v_vacio)) = v_cats,
+                   'el backfill es idempotente (segunda pasada sin cambios)');
+    end if;
+  end loop;
+
+  perform t.ok(t.cuenta(format('select count(*) from public.cuentas_contables where tenant_id = %s', t.g('pro'))) = v_pro_antes,
+               'el backfill no toca un hotel que ya tenia cuentas');
+  perform t.ok(t.cuenta(format('select count(*) from public.categorias_finanzas where tenant_id = %s', t.g('pro'))) = 0,
+               'un hotel con plan propio no recibe categorias de la plantilla');
+  perform t.ok(t.cuenta('select count(*) from public.cuentas_contables c join public.tenants t on t.id = c.tenant_id where t.slug = ''plantilla-base''') = v_pl_antes,
+               'el backfill no modifica la plantilla');
+end $$;
+
+-- ─── categorias_finanzas: structure, RLS and plan module ─────────────────
+do $$
+declare v_ven bigint; v_ven_b bigint;
+begin
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.categorias_finanzas'::regclass),
+               'categorias_finanzas tiene RLS');
+  perform t.ok(not has_table_privilege('anon', 'public.categorias_finanzas', 'select'),
+               'anon no tiene acceso a categorias_finanzas');
+  perform t.ok(not has_function_privilege('authenticated', 'public.fn_copiar_plan_cuentas_plantilla(bigint)', 'execute')
+               and not has_function_privilege('anon', 'public.fn_copiar_plan_cuentas_plantilla(bigint)', 'execute'),
+               'el helper de copia no se puede ejecutar desde el cliente');
+  perform t.ok(not has_function_privilege('authenticated', 'public.fn_seed_tenant_desde_plantilla(bigint)', 'execute')
+               and has_function_privilege('service_role', 'public.fn_seed_tenant_desde_plantilla(bigint)', 'execute'),
+               'fn_seed_tenant_desde_plantilla conserva sus privilegios (solo service_role)');
+
+  select id into v_ven   from public.cuentas_contables where tenant_id = t.g('pro')::bigint    and clave = 'VENTAS';
+  select id into v_ven_b from public.cuentas_contables where tenant_id = t.g('basico')::bigint and clave = 'VENTAS';
+  perform set_config('test.ven', v_ven::text, true);
+  perform set_config('test.ven_b', v_ven_b::text, true);
+
+  insert into public.categorias_finanzas (tenant_id, nombre, tipo, fk_cuenta_contable) values
+    (t.g('pro')::bigint,    'Ventas varias', 'ingreso', v_ven),
+    (t.g('basico')::bigint, 'Ventas varias', 'ingreso', v_ven_b);
+
+  perform t.falla(format('insert into public.categorias_finanzas (tenant_id, nombre, tipo, fk_cuenta_contable) values (%s, ''Ventas varias'', ''ingreso'', %s)', t.g('pro'), v_ven),
+                  '23505', 'el nombre de la categoria es unico por hotel');
+  perform t.falla(format('insert into public.categorias_finanzas (tenant_id, nombre, tipo, fk_cuenta_contable) values (%s, ''Rara'', ''otro'', %s)', t.g('pro'), v_ven),
+                  '23514', 'el tipo de la categoria es ingreso o egreso');
+  perform t.falla(format('insert into public.categorias_finanzas (tenant_id, nombre, tipo, fk_cuenta_contable) values (%s, ''Cruzada'', ''ingreso'', %s)', t.g('pro'), v_ven_b),
+                  '23503', 'la categoria no puede apuntar a una cuenta de otro hotel');
+end $$;
+
+do $$
+begin
+  -- admin: reads, writes (plan pro includes the module)
+  perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
+  perform t.ok(t.cuenta('select count(*) from public.categorias_finanzas') = 1, 'el admin lee las categorias de su hotel');
+  perform t.filas(format('insert into public.categorias_finanzas (nombre, tipo, fk_cuenta_contable) values (''Eventos'', ''ingreso'', %s)', t.g('ven')),
+                  1, 'el admin del plan pro crea una categoria');
+  perform t.filas('update public.categorias_finanzas set activo = false where nombre = ''Eventos''', 1,
+                  'el admin edita una categoria');
+  perform t.filas('delete from public.categorias_finanzas where nombre = ''Eventos''', 1,
+                  'el admin borra una categoria');
+  perform t.volver();
+
+  perform t.actuar(t.g('ger'), t.g('pro')::bigint);
+  perform t.ok(t.cuenta('select count(*) from public.categorias_finanzas') = 1, 'el gerente lee las categorias');
+  perform t.filas(format('insert into public.categorias_finanzas (nombre, tipo, fk_cuenta_contable) values (''Gerencia'', ''ingreso'', %s)', t.g('ven')),
+                  1, 'el gerente crea una categoria');
+  perform t.volver();
+
+  -- receptionist: no access at all
+  perform t.actuar(t.g('rec'), t.g('pro')::bigint);
+  perform t.ok(t.cuenta('select count(*) from public.categorias_finanzas') = 0, 'la recepcionista no ve categorias');
+  perform t.falla(format('insert into public.categorias_finanzas (nombre, tipo, fk_cuenta_contable) values (''Rec'', ''ingreso'', %s)', t.g('ven')),
+                  '42501', 'la recepcionista no crea categorias');
+  perform t.volver();
+
+  -- plan basico: reads, cannot write
+  perform t.actuar(t.g('basico_admin'), t.g('basico')::bigint);
+  perform t.ok(t.cuenta('select count(*) from public.categorias_finanzas') = 1, 'el admin del plan basico lee sus categorias');
+  perform t.falla(format('insert into public.categorias_finanzas (nombre, tipo, fk_cuenta_contable) values (''Eventos'', ''ingreso'', %s)', t.g('ven_b')),
+                  '42501', 'el plan basico no escribe categorias (modulo contabilidad)');
+  perform t.filas('update public.categorias_finanzas set activo = false', 0,
+                  'el plan basico no edita categorias');
+  perform t.volver();
+
+  -- tenant isolation
+  perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
+  perform t.ok(t.cuenta(format('select count(*) from public.categorias_finanzas where tenant_id = %s', t.g('basico'))) = 0,
+               'el admin no ve categorias de otro hotel');
+  perform t.volver();
+  perform t.anonimo();
+  perform t.falla('select count(*) from public.categorias_finanzas', '42501', 'anon no lee categorias');
+  perform t.volver();
 end $$;
 
 -- ═══ FIN (later tasks add their sections before this line) ═══

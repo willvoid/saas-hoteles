@@ -158,7 +158,7 @@ declare
   v_cta  text;
 begin
   insert into public.tipo_cuenta_contable (nombre) values ('Activo') returning id into v_tipo;
-  v_cta := format('insert into public.cuentas_contables (nombre, codigo, fk_tipo_cuenta, imputable) values (''C'', ''1'', %s, true)', v_tipo);
+  v_cta := format('insert into public.cuentas_contables (nombre, codigo, fk_tipo_cuenta, imputable) values (''C'', ''9.9.9'', %s, true)', v_tipo);
 
   perform t.actuar(t.g('basico_admin'), t.g('basico')::bigint);
   perform t.falla(v_cta, '42501', 'Basico no escribe en contabilidad');

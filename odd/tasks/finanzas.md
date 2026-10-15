@@ -30,7 +30,7 @@ Simple finance module for the hotel: income and expenses, accounts receivable an
 ## Tasks
 - [x] T0 Feature document and branch. Commit: f4a3fa0.
 - [x] T1 Migration 0016: fixes to `cuentas_contables`/`asientos`/`detalle_asientos`, `asiento_secuencia`, `fn_contabilizar`, balance constraint trigger, RLS move to `admin_gerente_total`; `saas-db/tests/finanzas.sql` (base). Route: delegated writer. RED observed (fixtures failed, no `clave` column), GREEN on throwaway PG17 with a Supabase stub: finanzas 118 ok, planes 24 ok, aislamiento 122 ok, registro_publico 35 ok; 0016 re-run is idempotent; real COMMIT with an unbalanced entry rejected. Not run: real Supabase/PostgREST, concurrency. Commit: pending (parent).
-- [ ] T2 Migration 0017: `tipo_cuenta_contable` seed, PY hotel chart of accounts in `plantilla-base`, `categorias_finanzas`, updated `fn_seed_tenant_desde_plantilla`, backfill.
+- [x] T2 Migration 0017: `tipo_cuenta_contable` seed, PY hotel chart of accounts in `plantilla-base`, `categorias_finanzas`, updated `fn_seed_tenant_desde_plantilla`, backfill. Route: delegated writer. RED observed (0017 skipped: first T2 assertion failed, no `Pasivo` type), GREEN on throwaway PG17 with the Supabase stub: finanzas 197 ok, aislamiento 122 ok, registro_publico 35 ok, planes 24 ok only with its fixture patched (see Progress). 0017 re-run on a migrated DB is idempotent; a real pre-0017 backfill gave an empty hotel 35 accounts + 17 categories and left a hotel with its own account untouched. New helper `fn_copiar_plan_cuentas_plantilla` (no grants); `fn_seed_tenant_desde_plantilla` delegates to it, grants unchanged. Not run: real Supabase/PostgREST. Review: assessed medium, candidate review declined by the user. Commit: see git log (`feat(db): seed hotel chart of accounts`).
 - [ ] T3 Migration 0018: `cuentas_fondos`, `medios_pago_fondo`, `facturas` credit columns, posting of invoice and annulment.
 - [ ] T4 Migration 0019: `proveedores`, `gastos`, `cobros`, `pagos`, `transferencias_fondos`, opening balances, posting and policies.
 - [ ] T5 Migration 0020: month lock (guards, `fn_cerrar_mes`, `fn_reabrir_mes`).
@@ -51,7 +51,8 @@ Simple finance module for the hotel: income and expenses, accounts receivable an
 `npm test` (vitest), SQL tests in `saas-db/tests/` (`finanzas.sql`, `aislamiento.sql`, `planes.sql`) on a throwaway PG, manual run of the Finanzas tab as admin and recepcionista.
 
 ## Progress
-- T0 and T1 done. Next: T2 (chart of accounts + backfill).
+- T0, T1 and T2 done. Next: T3 (funds, credit invoices).
+- T2 carry-over: `saas-db/tests/planes.sql:161` used account codigo `'1'`, which collided with the copied chart; the parent changed it to `'9.9.9'` and re-ran all four suites (finanzas, planes, aislamiento, registro_publico) green. Fund accounts of T3 must be children of the `DISPONIBILIDADES` account (1.1.01, non-imputable parent). The `finanzas.sql` fixture drops the copied chart of `fin-pro`/`fin-basico` to keep its minimal chart; T2 sections use their own tenants (`fin-nuevo`, `fin-vacio`).
 - Carry-over for T5: reversals leave both the original and the reversal asiento in `ANULADO`; the month-lock guard on `asientos` must allow that `estado -> ANULADO` update. `finanzas.sql` has a `FIN` marker: add new `do $$` sections before it. Local PG17 test method: see T1 evidence (throwaway cluster + Supabase stub).
 
 ## Route declaration
