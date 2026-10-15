@@ -5,7 +5,7 @@
 -- puede ver, modificar ni enlazar datos del otro. Corre dentro de una
 -- transaccion y la revierte al final: no deja nada en la base.
 --
--- Requisitos: migraciones 0001-0013 y supabase/seed.sql aplicados.
+-- Requisitos: migraciones 0001-0014 y supabase/seed.sql aplicados.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/aislamiento.sql
 --

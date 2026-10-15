@@ -22,8 +22,10 @@ supabase/migrations/
   0011_privilegios           privilegios minimos y EXECUTE de cada funcion
   0012_guardas_ddl           event trigger: RLS en tablas nuevas, sin EXECUTE en funciones nuevas
   0013_multi_hotel           una cuenta, varios hoteles (un perfil por hotel) y fn_mis_hoteles
+  0014_planes_suscripcion    planes, topes, modulos, solo lectura al vencer, fn_activar_plan
 supabase/seed.sql            catalogos minimos (solo desarrollo / respaldo)
 tests/aislamiento.sql        suite de aislamiento entre dos tenants
+tests/planes.sql             suite de planes y suscripciones
 ```
 
 ## Puesta en marcha
@@ -240,6 +242,45 @@ busqueda del perfil por hotel.
 - `admin-create-user` sigue respondiendo 409 si el correo ya existe: no suma una
   cuenta existente a otro hotel.
 
+## Planes y suscripciones
+
+La suscripcion es **por hotel** (`tenants`). Catalogo en `planes` (legible por
+`authenticated`, sin escritura); un tope `null` es ilimitado.
+
+| Plan | Mensual (PYG) | Anual | Habitaciones | Usuarios | Hoteles/cuenta | Contabilidad | SIFEN |
+|---|---|---|---|---|---|---|---|
+| `trial` (30 dias, no se ofrece) | 0 | 0 | 60 | 15 | 1 | si | si |
+| `basico` | 150.000 | 1.500.000 | 20 | 3 | 1 | no | no |
+| `pro` | 350.000 | 3.500.000 | 60 | 15 | 5 | si | si |
+| `business` | 800.000 | 8.000.000 | ilimitado | ilimitado | ilimitado | si | si |
+| `plantilla` (interno) | - | - | ilimitado | ilimitado | ilimitado | si | si |
+
+- **Topes de altas:** triggers `BEFORE INSERT` en `habitaciones` y `usuario`
+  rechazan el alta que pase el tope (SQLSTATE `23514`). Cuentan todas las filas
+  del hotel, activas o no, y serializan con un lock de la fila de `tenants`.
+- **Solo lectura al vencer:** policies `RESTRICTIVE` de INSERT/UPDATE/DELETE en las
+  tablas del tenant exigen `fn_suscripcion_vigente(current_tenant_id())`: trial con
+  `trial_fin >= hoy`, o `estado = 'activo'` con `vigente_hasta >= hoy`. El SELECT,
+  el login y `switch-hotel` no se tocan. Las funciones definer saltan RLS.
+- **Modulos:** escritura en `cuentas_contables`, `asientos`, `detalle_asientos`,
+  `saldos_mensuales` exige `mod_contabilidad`; en `timbrados` y
+  `datos_factura_sifen`, `mod_sifen`.
+- **Hoteles por cuenta:** `fn_max_hoteles_cuenta()` (usa `auth.uid()`, hay que
+  llamarla con el JWT del usuario) da el mayor tope entre los hoteles que la cuenta
+  administra; `null` es ilimitado. `create-hotel` debera consumirla en lugar de
+  `MAX_HOTELS_PER_ACCOUNT`.
+- **Cobro manual:** el operador (service_role o rol postgres) ejecuta
+  `select fn_activar_plan(<tenant>, 'pro', 'mensual', null, '<referencia>')`. Deja el
+  hotel `activo`, extiende `vigente_hasta` 1 o 12 meses desde lo que quede de
+  vigencia y registra el cobro en `pagos_suscripcion` (sin acceso para clientes).
+  Con `p_monto` null toma el precio de lista.
+- **Migracion de datos:** planes desconocidos pasan a `trial`; los trials sin fecha de
+  fin reciben 30 dias y los hoteles `activo` sin `vigente_hasta` reciben 30 dias de gracia.
+- **Limites a tener presentes:** los perfiles inactivos cuentan para el tope de
+  usuarios; la landing publica (RPC definer) sigue aceptando reservas de un hotel
+  vencido mientras su estado sea `trial`/`activo`; Storage no se bloquea por
+  vencimiento; las fechas usan `current_date` del servidor (UTC en Supabase).
+
 ## Cambios obligatorios en el frontend
 
 El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado contra
@@ -310,7 +351,7 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
 
 - Escritura de `timbrados`, `cuentas_contables`, `asientos`, `detalle_asientos` y
   `saldos_mensuales`: se propone `admin_gerente` (hoy cualquier usuario activo escribe).
-- `tenants.trial_fin` es informativo: la base no bloquea un trial vencido.
+- Vencimiento: el trial y el pago se evaluan por fecha (`fn_suscripcion_vigente`), sin cron; un hotel vencido queda en solo lectura. No hay aviso previo ni pasarela de pago: ver "Planes y suscripciones".
 - **La RPC de reserva web sigue siendo publica.** Los topes de arriba acotan el
   abuso pero no lo impiden: sin captcha ni rate limit un atacante puede ocupar
   inventario con reservas Pendiente, que no vencen. Lo correcto es exponerla solo
@@ -339,7 +380,7 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/aislamiento.sql
 ```
 
-Requiere las migraciones 0001-0013 y `seed.sql`. Incluye la seccion "Una cuenta,
+Requiere las migraciones 0001-0014 y `seed.sql`. Incluye la seccion "Una cuenta,
 dos hoteles" (cargo por hotel, visibilidad, `fn_mis_hoteles`, catalogos con el
 hotel activo suspendido, trigger de perfiles y alta de un hotel para una cuenta
 existente).
