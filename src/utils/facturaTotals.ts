@@ -32,7 +32,7 @@ export interface FacturaTotales {
 }
 
 /** IVA contenido en un monto IVA-incluido, según la tasa. */
-function ivaContenido(subtotal: number, rate: number): number {
+export function ivaContenido(subtotal: number, rate: number): number {
   if (rate === 10) return Math.round(subtotal / 11);
   if (rate === 5) return Math.round(subtotal / 21);
   return 0;
