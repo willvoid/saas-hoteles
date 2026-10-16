@@ -9,6 +9,9 @@ import { DataTable, Column } from '../components/DataTable';
 import { ModuleLayout } from '../components/ModuleLayout';
 import { Modal } from '../components/Modal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { RecargoDialog } from '../components/RecargoDialog';
+import { useEstanciaConRecargo, esEstadoConRecargo } from '../hooks/useEstanciaConRecargo';
+import { etiquetaMovimiento } from '../utils/recargoHorario';
 import { getAllowedTargets, requiresConfirmation, getTransitionCopy, toCanonicalEstado, esReservaCerrada } from '../utils/reservaEstado';
 import { SearchBox } from '../components/SearchBox';
 import { FilterChips, ChipOption } from '../components/FilterChips';
@@ -241,12 +244,20 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
   const [confirmTarget, setConfirmTarget] = useState<ReservaEstado | null>(null);
   const [facturarFolioId, setFacturarFolioId] = useState<number | null>(null);
   const [changingEstado, setChangingEstado] = useState(false);
+  // Check-in / Check-out pasan por un diálogo propio que sugiere el recargo por
+  // horario (late check-out / early check-in) y ejecuta el RPC atómico.
+  const estancia = useEstanciaConRecargo(reservationId);
 
   const handleEstadoAction = (target: ReservaEstado) => {
     // No se puede ingresar a un huésped sin una habitación asignada.
     if (target === 'Check-in' && detalles.length === 0) {
       clearMessages();
       setError('No se puede hacer Check-in sin habitaciones cargadas. Agregá al menos una habitación.');
+      return;
+    }
+    if (esEstadoConRecargo(target)) {
+      clearMessages();
+      estancia.abrir(target);
       return;
     }
     if (requiresConfirmation(target)) {
@@ -256,46 +267,14 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
     }
   };
 
+  // Cambios de estado sin recargo (Confirmada, Cancelada...). Check-in y
+  // Check-out van por `confirmarEstancia`.
   const applyEstadoChange = async (target: ReservaEstado) => {
     if (!reserva) return;
     setChangingEstado(true);
     clearMessages();
     try {
-      // Efecto de Check-out: obtener el folio antes de cambiar el estado de la reserva,
-      // para evitar que el trigger de base de datos lo cierre y no lo encontremos como 'abierto'.
-      let folioToInvoice = null;
-      if (target === 'Check-out' && onFacturarFolio) {
-        folioToInvoice = await folioService.getFolioByReserva(reserva.id_reserva);
-      }
-
       await ReservationService.changeEstado(reserva.id_reserva, reserva.estado, target);
-      
-      // Efecto de Check-in: abrir folio si aún no existe (antes vivía en ReservationForm)
-      // y cargarle automáticamente el alojamiento (noches * precio) de cada habitación,
-      // sólo la primera vez que se abre el folio, para no duplicar el cargo si el
-      // check-in se reintenta.
-      if (target === 'Check-in') {
-        const existingFolio = await folioService.getFolioByReserva(reserva.id_reserva);
-        if (!existingFolio) {
-          const nuevoFolio = await folioService.createFolio({
-            fk_reserva: reserva.id_reserva,
-            estado: 'abierto',
-            total_acumulado: 0,
-          });
-          const nights = calculateNights(reserva.fecha_entrada, reserva.fecha_salida);
-          const fkUsuario = currentUser?.id_usuario || currentUser?.id || 0;
-          for (const d of detalles) {
-            await folioService.ajustarCargoAlojamiento(nuevoFolio.id_folio, nights, d.subtotal, fkUsuario);
-          }
-        }
-      }
-      
-      // Efecto de Check-out: si el folio tiene consumos, ofrecer facturarlo.
-      if (target === 'Check-out' && onFacturarFolio && folioToInvoice) {
-        const cargos = await facturaService.getCargosFacturablesByFolio(folioToInvoice.id_folio);
-        if (cargos.length > 0) setFacturarFolioId(folioToInvoice.id_folio);
-      }
-      
       setConfirmTarget(null);
       await loadAll();
       setSuccess(`Estado actualizado a "${target}".`);
@@ -303,6 +282,28 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
       setError(e.message || 'No se pudo cambiar el estado.');
     } finally {
       setChangingEstado(false);
+    }
+  };
+
+  // Check-in / Check-out atómicos (recargo + historial + estado en una sola
+  // transacción). El RPC de check-in también abre el folio y carga el
+  // Alojamiento la primera vez, así que acá no se repite; el de check-out lo
+  // cierra por trigger y devuelve el folio para ofrecer facturarlo.
+  const confirmarEstancia = async () => {
+    const destino = estancia.destino;
+    const resultado = await estancia.confirmar();
+    if (!destino || !resultado) return;
+    clearMessages();
+    try {
+      if (destino === 'Check-out' && onFacturarFolio && resultado.id_folio != null) {
+        const cargos = await facturaService.getCargosFacturablesByFolio(resultado.id_folio);
+        if (cargos.length > 0) setFacturarFolioId(resultado.id_folio);
+      }
+      await loadAll();
+      setSuccess(`Estado actualizado a "${destino}".`);
+    } catch (e: any) {
+      // El estado ya cambió: sólo falló lo posterior (oferta de factura / recarga).
+      setError(e.message || 'El estado se actualizó, pero no se pudo recargar la reserva.');
     }
   };
 
@@ -978,6 +979,35 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
         />
       )}
 
+      {/* Check-in / Check-out: confirmación con recargo por horario sugerido */}
+      {estancia.destino && (
+        <RecargoDialog
+          isOpen={true}
+          title={getTransitionCopy(estancia.destino).title}
+          message={getTransitionCopy(estancia.destino).message}
+          confirmLabel={getTransitionCopy(estancia.destino).confirmLabel}
+          variant={getTransitionCopy(estancia.destino).variant}
+          etiquetaRecargo={estancia.destino === 'Check-out' ? 'Late check-out' : 'Early check-in'}
+          calculando={estancia.calculando}
+          errorCalculo={estancia.errorCalculo}
+          errorEnvio={estancia.errorEnvio}
+          enviando={estancia.enviando}
+          minutosExceso={estancia.sugerido?.minutosExceso ?? 0}
+          montoSugerido={estancia.montoSugerido}
+          hayRecargo={estancia.hayRecargo}
+          montoTexto={estancia.montoTexto}
+          exonerar={estancia.exonerar}
+          motivo={estancia.motivo}
+          motivoRequerido={estancia.motivoRequerido}
+          puedeConfirmar={estancia.puedeConfirmar}
+          onMontoChange={estancia.setMonto}
+          onExonerarChange={estancia.setExonerar}
+          onMotivoChange={estancia.setMotivo}
+          onConfirm={confirmarEstancia}
+          onCancel={estancia.cerrar}
+        />
+      )}
+
       {/* Ofrecer facturar el folio tras el Check-out */}
       {facturarFolioId != null && (
         <ConfirmDialog
@@ -1340,7 +1370,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
                   <div className="timeline-dot"><Clock size={12} /></div>
                   <div className="timeline-content">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                      <span className="timeline-type">{h.tipo_movimiento.replace(/_/g, ' ')}</span>
+                      <span className="timeline-type">{etiquetaMovimiento(h.tipo_movimiento)}</span>
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                         {h.fecha_movimiento ? new Date(h.fecha_movimiento).toLocaleString() : 'Sin fecha'} · {h.usuario?.nombre || 'Sistema'}
                       </span>

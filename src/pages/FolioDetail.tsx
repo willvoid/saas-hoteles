@@ -10,7 +10,9 @@ import { construirDesgloseAlojamiento, esCargoDeAlojamiento } from '../utils/alo
 import { formatGs } from '../utils/currency';
 import { ReservationService } from '../services/reservationService';
 import { normalizeRole } from '../utils/permissions';
-import { ArrowLeft, Plus, Wallet, Receipt, AlertTriangle, BedDouble, Unlock, Lock } from 'lucide-react';
+import { CargoManualDialog } from '../components/CargoManualDialog';
+import { useCargoManual } from '../hooks/useCargoManual';
+import { ArrowLeft, Plus, Wallet, Receipt, AlertTriangle, BedDouble, Unlock, Lock, PencilLine } from 'lucide-react';
 import '../index.css';
 import { COLORS, tint } from '../constants/colors';
 
@@ -91,6 +93,27 @@ export default function FolioDetail({
   // Habitaciones asignadas a la reserva: son las que componen el alojamiento
   // y alimentan su tabla propia.
   const [detallesReserva, setDetallesReserva] = useState<any[]>([]);
+
+  // Cargo manual libre (concepto + monto + motivo), registrado en la bitácora.
+  // El alojamiento tiene su propia fuente de verdad, así que no se ofrece acá.
+  const cargoManual = useCargoManual({
+    folioId,
+    fkReserva: folio?.fk_reserva ?? null,
+    idUsuario: currentUser?.id_usuario || currentUser?.id || null,
+    conceptos: conceptos.filter(c => !esCargoDeAlojamiento(c.nombre)),
+  });
+
+  const handleGuardarCargoManual = async () => {
+    clearMessages();
+    const resultado = await cargoManual.guardar();
+    if (!resultado) return;
+    if (resultado.historialFallo) {
+      setError('El cargo se agregó, pero no se pudo registrar en la bitácora de la reserva.');
+    } else {
+      setSuccess(resultado.mensaje);
+    }
+    await loadFolio();
+  };
 
   useEffect(() => {
     loadFolio();
@@ -592,9 +615,14 @@ export default function FolioDetail({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '12px', flexWrap: 'wrap' }}>
           <h3 style={{ margin: 0, fontSize: '18px', lineHeight: 1 }}>Cargos Extras Registrados</h3>
           {folio.estado === 'abierto' && (
-            <button className="btn-primary-sm" style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }} onClick={handleOpenAddCargo}>
-              <Plus size={15} /> Cargar o editar consumo
-            </button>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }} onClick={cargoManual.abrir}>
+                <PencilLine size={15} /> Cargo manual
+              </button>
+              <button className="btn-primary-sm" style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }} onClick={handleOpenAddCargo}>
+                <Plus size={15} /> Cargar o editar consumo
+              </button>
+            </div>
           )}
         </div>
 
@@ -638,6 +666,30 @@ export default function FolioDetail({
           saving={savingCargo}
           error={errorModal}
           onCrearProducto={onCrearProducto ? () => onCrearProducto(borradorActual()) : undefined}
+        />
+      )}
+
+      {/* ─── Dialog: Cargo manual ─── */}
+      {folio.estado === 'abierto' && (
+        <CargoManualDialog
+          isOpen={cargoManual.abierto}
+          subtitulo={`Folio #${folio.id_folio} · cargo libre con motivo, queda registrado en la bitácora`}
+          conceptos={conceptos.filter(c => !esCargoDeAlojamiento(c.nombre))}
+          fkConcepto={cargoManual.fkConcepto}
+          cantidad={cargoManual.cantidad}
+          precio={cargoManual.precio}
+          motivo={cargoManual.motivo}
+          maxMotivo={cargoManual.maxMotivo}
+          total={cargoManual.total}
+          guardando={cargoManual.guardando}
+          puedeGuardar={cargoManual.puedeGuardar}
+          error={cargoManual.error}
+          onConceptoChange={cargoManual.elegirConcepto}
+          onCantidadChange={cargoManual.cambiarCantidad}
+          onPrecioChange={cargoManual.cambiarPrecio}
+          onMotivoChange={cargoManual.cambiarMotivo}
+          onConfirm={handleGuardarCargoManual}
+          onCancel={cargoManual.cerrar}
         />
       )}
 
