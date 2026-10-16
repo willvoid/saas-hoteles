@@ -5,7 +5,7 @@
 -- vencer, fn_activar_plan y privilegios. Corre en una transaccion que se
 -- revierte al final: no deja nada en la base.
 --
--- Requisitos: migraciones 0001-0014 y supabase/seed.sql aplicados.
+-- Requisitos: migraciones 0001-0015 y supabase/seed.sql aplicados.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/planes.sql
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -112,7 +112,7 @@ end $$;
 -- ─── Activacion y catalogo ───────────────────────────────────────────────────
 do $$
 begin
-  perform t.ok((select vigente_hasta from public.tenants where id = t.g('basico')::bigint) > current_date
+  perform t.ok((select vigente_hasta from public.tenants where id = t.g('basico')::bigint) > public.hoy_py()
                and (select estado from public.tenants where id = t.g('basico')::bigint) = 'activo',
                'fn_activar_plan deja el hotel activo con vigencia futura');
   perform t.ok((select monto from public.pagos_suscripcion where tenant_id = t.g('basico')::bigint) = 150000,
@@ -162,7 +162,7 @@ begin
 
   perform t.actuar(t.g('basico_admin'), t.g('basico')::bigint);
   perform t.falla(v_cta, '42501', 'Basico no escribe en contabilidad');
-  perform t.falla('insert into public.timbrados (timbrado, inicio, vencimiento, estado, fk_establecimiento) values (''1'', current_date, current_date, ''Activo'', 1)',
+  perform t.falla('insert into public.timbrados (timbrado, inicio, vencimiento, estado, fk_establecimiento) values (''1'', public.hoy_py(), public.hoy_py(), ''Activo'', 1)',
                   '42501', 'Basico no escribe en timbrados (SIFEN)');
   perform t.volver();
 
@@ -175,7 +175,7 @@ end $$;
 -- ─── Trial vencido: solo lectura ─────────────────────────────────────────────
 do $$
 begin
-  update public.tenants set estado = 'trial', trial_fin = current_date - 1, vigente_hasta = null
+  update public.tenants set estado = 'trial', trial_fin = public.hoy_py() - 1, vigente_hasta = null
   where id = t.g('pro')::bigint;
   perform t.ok(not public.fn_suscripcion_vigente(t.g('pro')::bigint), 'un trial vencido no esta vigente');
 
@@ -188,7 +188,7 @@ begin
   perform t.volver();
 
   perform public.fn_activar_plan(t.g('pro')::bigint, 'pro', 'anual', 3500000, 'renovacion');
-  perform t.ok((select vigente_hasta from public.tenants where id = t.g('pro')::bigint) >= current_date + 365,
+  perform t.ok((select vigente_hasta from public.tenants where id = t.g('pro')::bigint) >= public.hoy_py() + 365,
                'el ciclo anual extiende 12 meses');
   perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
   perform t.filas('update public.tipo_habitacion set descripcion = ''z''', 1, 'tras activar el plan vuelve a escribir');

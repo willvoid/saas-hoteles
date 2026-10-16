@@ -30,11 +30,15 @@ supabase/migrations/
   0019_gastos_cobros_pagos   proveedores, gastos, cobros, pagos, transferencias, saldos iniciales
   0020_cierre_mensual        cierre y reapertura de meses (fn_cerrar_mes / fn_reabrir_mes)
   0021_reportes_finanzas     RPC de reportes de finanzas (fn_rep_*)
+  0022_cargos_extra_checkout horarios por establecimiento, recargos de late check-out / early check-in y RPC atomicas
+  0023_fecha_paraguay        hoy_py(): la fecha de hoy en Paraguay en lugar de current_date (UTC)
 supabase/seed.sql            catalogos minimos (solo desarrollo / respaldo)
 tests/aislamiento.sql        suite de aislamiento entre dos tenants (incluye finanzas)
 tests/planes.sql             suite de planes y suscripciones
 tests/finanzas.sql           suite del modulo de finanzas (contabilizacion, cierre, reportes)
 tests/registro_publico.sql   suite del alta publica de hoteles
+tests/fecha_paraguay.sql     suite de hoy_py() y de las fechas de suscripcion y tarifas
+tests/cargos_extra.sql       suite de horarios, recargos de check-in/out y RPC atomicas
 ```
 
 ## Puesta en marcha
@@ -100,6 +104,11 @@ para cada catalogo con identidad) y verificar que existan los cargos
 - **Funcion nueva:** nace sin EXECUTE para nadie (0012). Hay que hacer el `grant`
   explicito, tambien despues de un `CREATE OR REPLACE`, que dispara la guarda de
   nuevo (ver 0011).
+- **Fecha de hoy:** siempre `public.hoy_py()`, nunca `current_date`. Supabase corre
+  en UTC y `current_date` cambia de dia a las 21:00 de Paraguay (UTC-3): una
+  activacion o un vencimiento calculados con el quedan adelantados un dia. `hoy_py()`
+  es `(now() at time zone 'America/Asuncion')::date` (0015) y sirve tambien como
+  default de columna. La unica excepcion son fechas de prueba relativas en `tests/`.
 - **Cargo nuevo:** `current_puede_operar()` usa una lista cerrada (admin,
   administrador, gerente, recepcionista). Un cargo que no este en ella solo lee;
   sumarlo en 0004 y en `src/utils/permissions.ts`.
@@ -299,7 +308,8 @@ La suscripcion es **por hotel** (`tenants`). Catalogo en `planes` (legible por
 - **Limites a tener presentes:** los perfiles inactivos cuentan para el tope de
   usuarios; la landing publica (RPC definer) sigue aceptando reservas de un hotel
   vencido mientras su estado sea `trial`/`activo`; Storage no se bloquea por
-  vencimiento; las fechas usan `current_date` del servidor (UTC en Supabase).
+  vencimiento; las fechas de vigencia, trial y tarifas usan `public.hoy_py()` (hora de Paraguay,
+  ver 0015), no `current_date`.
 
 ## Finanzas
 
@@ -501,9 +511,11 @@ El frontend actual **no funciona sin tocarlo**. Lo que se rompe, verificado cont
 ```bash
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/aislamiento.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/finanzas.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/fecha_paraguay.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/cargos_extra.sql
 ```
 
-Requieren las migraciones 0001-0021 y `seed.sql` (`planes.sql` y
+Requieren las migraciones 0001-0023 y `seed.sql` (`planes.sql` y
 `registro_publico.sql` se corren igual). `aislamiento.sql` incluye la seccion "Una
 cuenta, dos hoteles" (cargo por hotel, visibilidad, `fn_mis_hoteles`, catalogos con el
 hotel activo suspendido, trigger de perfiles y alta de un hotel para una cuenta
