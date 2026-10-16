@@ -71,7 +71,7 @@ export default function ManageEstablecimientos({ onBack, canEditHorarios = true 
   const puedeVerHorarios = !!establecimiento;
 
   const selectorDeVista = puedeVerHorarios ? (
-    <div className="tabs-bar" style={{ marginBottom: '16px' }}>
+    <div className="tabs-bar" style={{ marginBottom: '16px', flexShrink: 0, minHeight: 'fit-content' }}>
       <button className={`tab-btn ${vista === 'datos' ? 'active' : ''}`} onClick={() => setVista('datos')}>
         Datos del establecimiento
       </button>
