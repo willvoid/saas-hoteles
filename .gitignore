@@ -19,6 +19,9 @@ npm-debug.log*
 # Vercel
 .vercel/
 
+# Supabase CLI local state (project ref, pooler URL, versions)
+saas-db/supabase/.temp/
+
 # Editor / OS
 .vscode/*
 !.vscode/extensions.json
