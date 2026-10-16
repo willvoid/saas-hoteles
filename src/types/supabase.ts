@@ -604,6 +604,53 @@ export type Database = {
           },
         ]
       }
+      config_horarios_establecimiento: {
+        Row: {
+          created_at: string
+          fk_establecimiento: number
+          hora_checkin: string // Postgres `time`: "14:00:00"
+          hora_checkout: string
+          id_config: number
+          metodo_recargo: string // 'PORCENTAJE' | 'FIJO_HORA'
+          tenant_id: number
+          tolerancia_min: number
+          updated_at: string
+          valor_recargo: number // PORCENTAJE: % (0-100). FIJO_HORA: Gs por hora.
+        }
+        Insert: {
+          created_at?: string
+          fk_establecimiento: number
+          hora_checkin?: string
+          hora_checkout?: string
+          id_config?: never
+          metodo_recargo?: string
+          tenant_id?: number
+          tolerancia_min?: number
+          updated_at?: string
+          valor_recargo?: number
+        }
+        Update: {
+          created_at?: string
+          fk_establecimiento?: number
+          hora_checkin?: string
+          hora_checkout?: string
+          id_config?: never
+          metodo_recargo?: string
+          tenant_id?: number
+          tolerancia_min?: number
+          updated_at?: string
+          valor_recargo?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "config_horarios_establecimiento_fk_estab_fkey"
+            columns: ["fk_establecimiento"]
+            isOneToOne: false
+            referencedRelation: "establecimientos"
+            referencedColumns: ["id_establecimiento"]
+          },
+        ]
+      }
       cuentas_contables: {
         Row: {
           activo: boolean
@@ -1956,6 +2003,8 @@ export type Database = {
       }
       reservas: {
         Row: {
+          checkin_real_at: string | null // stamped by trigger when estado becomes Check-in
+          checkout_real_at: string | null // stamped by trigger when estado becomes Check-out
           codigo_reserva: string
           created_at: string
           estado: string
@@ -1969,6 +2018,8 @@ export type Database = {
           total_estimado: number
         }
         Insert: {
+          checkin_real_at?: string | null
+          checkout_real_at?: string | null
           codigo_reserva: string
           created_at?: string
           estado?: string
@@ -1982,6 +2033,8 @@ export type Database = {
           total_estimado?: number
         }
         Update: {
+          checkin_real_at?: string | null
+          checkout_real_at?: string | null
           codigo_reserva?: string
           created_at?: string
           estado?: string
@@ -2490,6 +2543,26 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      calcular_recargo_horario: {
+        Args: { p_reserva: number; p_tipo: string; p_momento?: string }
+        Returns: {
+          minutos_exceso: number
+          monto_sugerido: number
+          concepto_id: number | null
+          metodo: string
+          tolerancia_min: number
+          valor_recargo: number
+          tarifa_noche: number
+        }[]
+      }
+      checkout_con_recargo: {
+        Args: { p_reserva: number; p_monto?: number | null; p_motivo?: string | null; p_exonerar?: boolean }
+        Returns: Json
+      }
+      checkin_con_recargo: {
+        Args: { p_reserva: number; p_monto?: number | null; p_motivo?: string | null; p_exonerar?: boolean }
+        Returns: Json
+      }
       fn_cerrar_mes: {
         Args: { p_anio: number; p_mes: number }
         Returns: undefined

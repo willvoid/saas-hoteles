@@ -265,6 +265,35 @@ export const folioService = {
     return { ...data, merged: !!existente };
   },
 
+  // Cargo manual libre (recepción): concepto + cantidad + precio a elección, sin
+  // tomar el arancel del producto. Reutiliza addCargo: si el concepto ya está
+  // en el folio se combina con esa fila (precio unitario promedio), porque el
+  // resto de las pantallas asume una sola fila ACTIVA por concepto (maybeSingle).
+  // Sólo en folios abiertos; el registro en la bitácora lo hace quien llama.
+  async addCargoManual(cargo: {
+    fk_folio: number;
+    fk_concepto: number;
+    cantidad: number;
+    monto_unitario: number;
+    fk_usuario: number;
+  }) {
+    const { data: folio, error: folioError } = await supabase
+      .from('folios')
+      .select('estado')
+      .eq('id_folio', cargo.fk_folio)
+      .single();
+    if (folioError) throw folioError;
+    if (String(folio.estado).toLowerCase() !== 'abierto') {
+      throw new Error('El folio está cerrado: no se pueden agregar cargos.');
+    }
+
+    return this.addCargo({
+      ...cargo,
+      monto_total: cargo.cantidad * cargo.monto_unitario,
+      estado: 'ACTIVO',
+    });
+  },
+
   // Actualizar un cargo en un folio. fk_concepto es opcional: se manda cuando
   // el usuario cambia el producto del cargo (el precio unitario ya no se edita
   // a mano, se deriva del producto elegido en FolioDetail.tsx).
