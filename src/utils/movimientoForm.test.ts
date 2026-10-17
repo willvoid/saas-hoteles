@@ -6,7 +6,7 @@ import {
   movimientoPdfRows,
   validateMovimientoForm,
 } from './movimientoForm';
-import type { Categoria, Movimiento } from '../../services/superadminFinanzasService';
+import type { Categoria, Movimiento } from '../services/superadminFinanzasService';
 
 const cat = (id: string, tipo: 'ingreso' | 'egreso', activo = true): Categoria => ({
   id,

@@ -14,22 +14,22 @@ import { Campo, CampoMonto } from '../../components/finanzas/Campo';
 import { KpiCard } from '../../components/finanzas/KpiCard';
 import { RangoFechas } from '../../components/finanzas/RangoFechas';
 import { MonthlyBarChart } from '../../components/superadmin/MonthlyBarChart';
+import { TIPO_LABEL } from '../../constants/finanzasPlataforma';
 import {
-  TIPO_LABEL,
   categoriasParaTipo,
   emptyMovimientoForm,
   formFromMovimiento,
   movimientoDescripcion,
   movimientoPdfRows,
   validateMovimientoForm,
-} from '../../components/superadmin/movimientoForm';
-import type { MovimientoFormState } from '../../components/superadmin/movimientoForm';
+} from '../../utils/movimientoForm';
+import type { MovimientoFormState } from '../../utils/movimientoForm';
 import { useFinanzasPlataforma } from '../../hooks/useFinanzasPlataforma';
 import type { Categoria, CategoriaInput, Movimiento, MovimientoTipo } from '../../services/superadminFinanzasService';
 import { formatGs } from '../../utils/currency';
 import { fechaNegocioHoy } from '../../utils/periodoContable';
 import { COLORS, tint } from '../../constants/colors';
-import { SuperadminTabs } from './SuperadminTabs';
+import { SuperadminTabs } from '../../components/superadmin/SuperadminTabs';
 import '../../index.css';
 
 type Result = { ok: boolean; message?: string };

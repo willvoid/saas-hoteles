@@ -3,9 +3,10 @@ import type {
   Movimiento,
   MovimientoInput,
   MovimientoTipo,
-} from '../../services/superadminFinanzasService';
-import { formatGs } from '../../utils/currency';
-import { parseMonto } from '../../utils/finanzasForm';
+} from '../services/superadminFinanzasService';
+import { formatGs } from './currency';
+import { TIPO_LABEL } from '../constants/finanzasPlataforma';
+import { parseMonto } from './finanzasForm';
 
 export interface MovimientoFormState {
   tipo: MovimientoTipo;
@@ -66,7 +67,6 @@ export function validateMovimientoForm(f: MovimientoFormState): MovimientoValida
   };
 }
 
-export const TIPO_LABEL: Record<MovimientoTipo, string> = { ingreso: 'Ingreso', egreso: 'Egreso' };
 
 export function movimientoDescripcion(m: Movimiento): string {
   if (m.origen === 'suscripcion') {

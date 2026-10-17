@@ -1,7 +1,7 @@
 import type { SerieMensualItem } from '../../services/superadminFinanzasService';
 import { COLORS } from '../../constants/colors';
 import { formatGs } from '../../utils/currency';
-import { buildMonthlyBars } from './monthlyBars';
+import { buildMonthlyBars } from '../../utils/monthlyBars';
 
 const VIEW_WIDTH = 700;
 const VIEW_HEIGHT = 260;

@@ -5,7 +5,7 @@ import { DataTable } from '../../components/DataTable';
 import type { Column } from '../../components/DataTable';
 import { SearchBox } from '../../components/SearchBox';
 import { StatusBadge } from '../../components/StatusBadge';
-import { SuperadminTabs } from './SuperadminTabs';
+import { SuperadminTabs } from '../../components/superadmin/SuperadminTabs';
 import { useTenantsList } from '../../hooks/useTenantsAdmin';
 import type { TenantEstado, TenantSummary } from '../../services/superadminService';
 import {

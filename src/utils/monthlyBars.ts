@@ -1,4 +1,4 @@
-import type { SerieMensualItem } from '../../services/superadminFinanzasService';
+import type { SerieMensualItem } from '../services/superadminFinanzasService';
 
 export interface BarGroup {
   mes: string;
