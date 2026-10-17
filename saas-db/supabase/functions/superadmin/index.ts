@@ -17,6 +17,7 @@ import {
   validateCreateHotelInput,
 } from '../_shared/hotelInput.ts';
 import { isPlainObject, parsePositiveInt } from '../_shared/rules.ts';
+import { makeFinanzasActions } from './finanzas.ts';
 
 const ESTADOS = ['trial', 'activo', 'suspendido'] as const;
 const CICLOS = ['mensual', 'anual'] as const;
@@ -241,6 +242,7 @@ const ACTIONS: Record<string, (ctx: Ctx) => Promise<Response>> = {
   set_estado: setEstado,
   set_plan: setPlan,
   create_tenant: createTenant,
+  ...makeFinanzasActions(audit),
 };
 
 async function handle(req: Request): Promise<Response> {
