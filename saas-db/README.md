@@ -39,6 +39,7 @@ tests/finanzas.sql           suite del modulo de finanzas (contabilizacion, cier
 tests/registro_publico.sql   suite del alta publica de hoteles
 tests/fecha_paraguay.sql     suite de hoy_py() y de las fechas de suscripcion y tarifas
 tests/cargos_extra.sql       suite de horarios, recargos de check-in/out y RPC atomicas
+tests/finanzas_plataforma.sql  suite de finanzas de plataforma (categorias, movimientos, resumen, MRR)
 ```
 
 ## Puesta en marcha
