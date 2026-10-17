@@ -1966,6 +1966,9 @@ body::after {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 48px 24px;
+  /* Above the decorative body orbs (z-index 0), which otherwise swallow clicks on wide screens. */
+  position: relative;
+  z-index: 1;
   box-sizing: border-box;
   background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
   color: var(--text-primary);
