@@ -32,7 +32,7 @@ With this approach, no policy in 0006 or 0014 needs to change. Tenant isolation 
 | T5 | End-to-end check (see Verification) and close-out. | inline | — |
 
 - [x] T1 — route: inline. Wrote `tests/platform_admins.sql` and `0024_platform_admins.sql`. RED/GREEN not observed: no Docker and no credentials for the local Postgres, so the SQL suite has not been run yet (must run before PR1).
-- [ ] T2
+- [x] T2 — route: delegated writer (new non-trivial file, needed reading of 4 existing functions). `functions/superadmin/index.ts` (~270 lines). Parent spot check: guard fails closed (403 unless isAdmin === true), whoami open to any valid JWT. NOT verified: no deno on PATH, no DB, no guard test. `create_tenant` duplicates register-tenant core (password rule is simpler: 8-72 chars).
 - [ ] T3
 - [ ] T4
 - [ ] T5
@@ -49,8 +49,8 @@ With this approach, no policy in 0006 or 0014 needs to change. Tenant isolation 
 
 ## Delivery
 - Forecast is about 700–900 authored lines, which is over the budget of 400. Strategy: `ask-on-risk`. I'll ask for the chain strategy before the commit that crosses the budget.
-- Planned slices: PR1 = T1+T2 (backend), PR2 = T3+T4 (frontend).
+- Strategy chosen: stacked-to-main. Slices: PR1 = T1 (ec01922), PR2 = T2, PR3 = T3+T4. Running count after T2 ~515 lines.
 - Push, opening PRs and merging are your call.
 
 ## Progress
-T1 committed. Next step: T2.
+T1, T2 committed. Next step: T3.
