@@ -4,6 +4,7 @@ import type { Tables } from '../types/supabase';
 import { getCurrentTenantId, loadTenant, TENANT_SUSPENDIDO } from './tenantService';
 import type { TenantInfo } from './tenantService';
 import { readFunctionError } from '../utils/functionError';
+import { whoami } from './superadminService';
 
 // Single boundary for all Supabase Auth interaction. Components and hooks must
 // go through this service instead of importing the supabase client directly.
@@ -23,7 +24,7 @@ export type SessionUser = Tables<'usuario'> & { cargo: string; tenant: TenantInf
 
 // RLS hides the profile of a suspended tenant, so it is told apart from a missing one via the tenant row.
 export type SessionResult =
-  | { status: 'ok'; user: SessionUser }
+  | { status: 'ok'; user: SessionUser; isPlatformAdmin: boolean }
   | { status: 'suspended'; tenant: TenantInfo }
   | { status: 'missing' };
 
@@ -72,12 +73,21 @@ export async function loadProfile(authId: string): Promise<SessionUser | null> {
   return { ...profile, cargo: rolRpc || cargo?.cargo || '', tenant } as SessionUser;
 }
 
+// A whoami failure must never break a normal login: treat it as not an admin.
+async function resolvePlatformAdmin(): Promise<boolean> {
+  try {
+    return (await whoami()).isPlatformAdmin === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveSession(authId: string): Promise<SessionResult> {
   const user = await loadProfile(authId);
   if (user) {
     return user.tenant.estado === TENANT_SUSPENDIDO
       ? { status: 'suspended', tenant: user.tenant }
-      : { status: 'ok', user };
+      : { status: 'ok', user, isPlatformAdmin: await resolvePlatformAdmin() };
   }
 
   const tenant = await loadTenant();
