@@ -53,4 +53,4 @@ With this approach, no policy in 0006 or 0014 needs to change. Tenant isolation 
 - Push, opening PRs and merging are your call.
 
 ## Progress
-T1-T4 committed. Native review declined by user for the T1+T2 range. Next step: T5 (end-to-end: needs a database with 0024 applied and a platform_admins row).
+T1-T4 committed (ec01922, 85e6b73, f0dca90, 30164a0). Native review (medium, slice_budget_reached): declined by the user for T1+T2 and for T3+T4. T5 BLOCKED: no Docker and no database credentials here, so SQL suite (tests/platform_admins.sql, aislamiento.sql, planes.sql), the edge function (no deno) and the UI flows have never been run. Pending: apply 0024 to a database, insert my row in platform_admins, run the SQL suites, deploy the function, and walk the acceptance criteria in a browser. Delivery: PR3 (T3+T4) is ~1500 lines, over the 400 heuristic; split further if requested.
