@@ -10,10 +10,14 @@ import Home from './pages/Home';
 import Register from './pages/Register';
 import TenantSuspended from './pages/TenantSuspended';
 import HotelSelect from './pages/HotelSelect';
+import TenantsList from './pages/superadmin/TenantsList';
+import TenantDetail from './pages/superadmin/TenantDetail';
+import CreateTenant from './pages/superadmin/CreateTenant';
 import { getCurrentSession, onAuthStateChange, signOut, resolveSession } from './services/authService';
 import type { SessionUser } from './services/authService';
 import type { TenantInfo } from './services/tenantService';
 import { UsuarioService } from './services/usuarioService';
+import { whoami } from './services/superadminService';
 import './index.css';
 
 const esInactivo = (estado?: string | null) =>
@@ -27,12 +31,15 @@ function App() {
   const [suspendedTenant, setSuspendedTenant] = useState<TenantInfo | null>(null);
   // A signed-in account may have no resolvable hotel yet (it is choosing one).
   const [hasSession, setHasSession] = useState(false);
+  // Platform operator flag: also resolved for accounts with no usable hotel.
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   const applySession = useCallback(async (session: Session | null) => {
     if (!session?.user) {
       setHasSession(false);
+      setIsPlatformAdmin(false);
       setUser(null);
       setSuspendedTenant(null);
       return;
@@ -42,10 +49,14 @@ function App() {
     try {
       const result = await resolveSession(session.user.id);
       setUser(result.status === 'ok' ? result.user : null);
+      setIsPlatformAdmin(
+        result.status === 'ok' ? result.isPlatformAdmin : await whoami().then((r) => r.isPlatformAdmin === true, () => false),
+      );
       setSuspendedTenant(result.status === 'suspended' ? result.tenant : null);
     } catch {
       setUser(null);
       setSuspendedTenant(null);
+      setIsPlatformAdmin(false);
     }
   }, []);
 
@@ -86,6 +97,7 @@ function App() {
       await signOut();
       setUser(null);
       setHasSession(false);
+      setIsPlatformAdmin(false);
       navigate('/login', { replace: true, state: { mensaje: MENSAJE_DESACTIVADO } });
     };
 
@@ -114,6 +126,7 @@ function App() {
     setUser(null);
     setSuspendedTenant(null);
     setHasSession(false);
+    setIsPlatformAdmin(false);
     navigate('/login');
   };
 
@@ -162,6 +175,18 @@ function App() {
             <Navigate to="/login" replace />
           )
         }
+      />
+      <Route
+        path="/superadmin"
+        element={isPlatformAdmin ? <TenantsList onLogout={handleLogout} /> : <Navigate to={hasSession ? '/hoteles' : '/login'} replace />}
+      />
+      <Route
+        path="/superadmin/nuevo"
+        element={isPlatformAdmin ? <CreateTenant /> : <Navigate to={hasSession ? '/hoteles' : '/login'} replace />}
+      />
+      <Route
+        path="/superadmin/:tenantId"
+        element={isPlatformAdmin ? <TenantDetail /> : <Navigate to={hasSession ? '/hoteles' : '/login'} replace />}
       />
     </Routes>
   );

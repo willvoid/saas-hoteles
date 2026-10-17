@@ -34,7 +34,7 @@ With this approach, no policy in 0006 or 0014 needs to change. Tenant isolation 
 - [x] T1 — route: inline. Wrote `tests/platform_admins.sql` and `0024_platform_admins.sql`. RED/GREEN not observed: no Docker and no credentials for the local Postgres, so the SQL suite has not been run yet (must run before PR1).
 - [x] T2 — route: delegated writer (new non-trivial file, needed reading of 4 existing functions). `functions/superadmin/index.ts` (~270 lines). Parent spot check: guard fails closed (403 unless isAdmin === true), whoami open to any valid JWT. NOT verified: no deno on PATH, no DB, no guard test. `create_tenant` duplicates register-tenant core (password rule is simpler: 8-72 chars).
 - [x] T3 — route: delegated writer. RED observed (2 files failed), GREEN: vitest full suite 45 files / 616 tests, build OK. Parent spot check: 11 tests pass; tsc shows 17 pre-existing errors, none in touched files. Gap: the thrown/rejected network error path of whoami in resolveSession is not covered by a test.
-- [ ] T4
+- [x] T4 — route: delegated writer. RED observed (2 new test files failed to load), GREEN: full vitest 47 files / 630 tests, build OK, tsc stays at 17 pre-existing errors (none in new files). Parent spot check: 630 tests pass, /superadmin routes guarded by isPlatformAdmin, flag reset on logout/no session/error. Gaps: no DOM test env (hooks and pages covered only by build/typecheck, pure helpers tested); pages NOT exercised in a browser. Reactivation sets trial plan back to trial, others to activo.
 - [ ] T5
 
 ## Acceptance criteria
@@ -53,4 +53,4 @@ With this approach, no policy in 0006 or 0014 needs to change. Tenant isolation 
 - Push, opening PRs and merging are your call.
 
 ## Progress
-T1-T3 committed. Native review declined by user for T1+T2 range (medium, slice_budget_reached). Next step: T4.
+T1-T4 committed. Native review declined by user for the T1+T2 range. Next step: T5 (end-to-end: needs a database with 0024 applied and a platform_admins row).
