@@ -36,7 +36,7 @@ The platform owner has no view of the SaaS's money. Subscription payments sit in
 - [x] T2 — route: delegated writer. Added validation.ts (24 vitest tests, RED then GREEN observed) and finanzas.ts handlers wired in index.ts; handlers not executed or type-checked (no deno on PATH, no DB/edge runtime).
 - [x] T3 — route: delegated writer. RED observed (modules missing), then GREEN: 18 new tests plus service/hook suites pass (82 in src/services+src/hooks). `npm run build` completed with no errors. Exported `call` from superadminService. Hook effects not DOM-tested; only pure helpers are.
 - [x] T4 — route: delegated writer. RED then GREEN for monthlyBars and movimientoForm helpers (12 tests); full vitest 682 pass; `npm run build` OK; tsc 18 errors, same as baseline (none in new files). UI not exercised in a browser. SuperadminTabs reuses the `tabs-bar` classes instead of StatusTabs (its count prop is mandatory).
-- [ ] T5
+- [~] T5 — inline, PARTIAL. Migration 0025 APPLIED to the hosted Supabase DB (user-authorized). `finanzas_plataforma.sql`: first run RED (MRR baseline was taken after the fixture insert), fixed, then GREEN, and no residue left after rollback. `planes.sql` GREEN. `platform_admins.sql` FAILS at "service_role escribe y lee platform_audit" because the hosted DB already has platform_audit rows (the test assumes count = 1); pre-existing assumption, not caused by this feature. Pending: deploy the `superadmin` edge function (needs explicit user OK) and a browser check of /superadmin/finanzas.
 
 ## Acceptance criteria
 - Activating a plan shows up as income and in the hotel ranking.
@@ -49,4 +49,4 @@ The platform owner has no view of the SaaS's money. Subscription payments sit in
 - `npm test` and `npm run build`.
 
 ## Progress / Next step
-Next step: T5.
+Next step: deploy the edge function (needs user OK), browser check, then open the stacked PRs.

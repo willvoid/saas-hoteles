@@ -94,6 +94,12 @@ begin
 end $$;
 
 -- ─── Datos de prueba ────────────────────────────────────────────────────────
+-- Linea base del MRR (la base puede traer hoteles): se asevera como delta.
+-- Se toma ANTES de insertar los hoteles de prueba.
+create temp table base as
+select (public.fn_admin_finanzas_resumen('2099-01-01', '2099-12-31')->>'mrr')::numeric as mrr;
+grant all on base to public;
+
 insert into public.planes (codigo, nombre, precio_mensual, precio_anual)
 values ('tst_fin', 'Plan Test Finanzas', 100000, 1200000);
 
@@ -101,11 +107,6 @@ insert into public.tenants (nombre, slug, estado, plan, ciclo_facturacion, vigen
   ('Hotel Fin Mensual', 'hotel-fin-mensual', 'activo', 'tst_fin', 'mensual', current_date + 20),
   ('Hotel Fin Anual',   'hotel-fin-anual',   'activo', 'tst_fin', 'anual',   current_date + 200),
   ('Hotel Fin Vencido', 'hotel-fin-vencido', 'activo', 'tst_fin', 'mensual', current_date - 5);
-
--- Linea base del MRR (la base puede traer hoteles): se asevera como delta.
-create temp table base as
-select (public.fn_admin_finanzas_resumen('2099-01-01', '2099-12-31')->>'mrr')::numeric as mrr;
-grant all on base to public;
 
 -- Los datos de prueba viven en 2099 para no mezclarse con datos reales.
 insert into public.pagos_suscripcion (tenant_id, plan, ciclo, monto, desde, hasta, created_at)
