@@ -13,6 +13,7 @@ import HotelSelect from './pages/HotelSelect';
 import TenantsList from './pages/superadmin/TenantsList';
 import TenantDetail from './pages/superadmin/TenantDetail';
 import CreateTenant from './pages/superadmin/CreateTenant';
+import FinanzasPlataforma from './pages/superadmin/FinanzasPlataforma';
 import { getCurrentSession, onAuthStateChange, signOut, resolveSession } from './services/authService';
 import type { SessionUser } from './services/authService';
 import type { TenantInfo } from './services/tenantService';
@@ -183,6 +184,10 @@ function App() {
       <Route
         path="/superadmin/nuevo"
         element={isPlatformAdmin ? <CreateTenant /> : <Navigate to={hasSession ? '/hoteles' : '/login'} replace />}
+      />
+      <Route
+        path="/superadmin/finanzas"
+        element={isPlatformAdmin ? <FinanzasPlataforma /> : <Navigate to={hasSession ? '/hoteles' : '/login'} replace />}
       />
       <Route
         path="/superadmin/:tenantId"

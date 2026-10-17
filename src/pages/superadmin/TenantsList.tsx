@@ -5,6 +5,7 @@ import { DataTable } from '../../components/DataTable';
 import type { Column } from '../../components/DataTable';
 import { SearchBox } from '../../components/SearchBox';
 import { StatusBadge } from '../../components/StatusBadge';
+import { SuperadminTabs } from './SuperadminTabs';
 import { useTenantsList } from '../../hooks/useTenantsAdmin';
 import type { TenantEstado, TenantSummary } from '../../services/superadminService';
 import {
@@ -92,6 +93,8 @@ export default function TenantsList({ onLogout }: TenantsListProps) {
             </button>
           </div>
         </div>
+
+        <SuperadminTabs active="hoteles" />
 
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px', alignItems: 'center' }}>
           <SearchBox
