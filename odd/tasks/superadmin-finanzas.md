@@ -34,7 +34,7 @@ The platform owner has no view of the SaaS's money. Subscription payments sit in
 
 - [x] T1 — route: delegated writer. Wrote 0025 migration and tests/finanzas_plataforma.sql; NOT executed (no DB credentials: psql needs a password, no docker), so no RED/GREEN observed.
 - [x] T2 — route: delegated writer. Added validation.ts (24 vitest tests, RED then GREEN observed) and finanzas.ts handlers wired in index.ts; handlers not executed or type-checked (no deno on PATH, no DB/edge runtime).
-- [ ] T3
+- [x] T3 — route: delegated writer. RED observed (modules missing), then GREEN: 18 new tests plus service/hook suites pass (82 in src/services+src/hooks). `npm run build` completed with no errors. Exported `call` from superadminService. Hook effects not DOM-tested; only pure helpers are.
 - [ ] T4
 - [ ] T5
 
@@ -49,4 +49,4 @@ The platform owner has no view of the SaaS's money. Subscription payments sit in
 - `npm test` and `npm run build`.
 
 ## Progress / Next step
-Next step: T3.
+Next step: T4.

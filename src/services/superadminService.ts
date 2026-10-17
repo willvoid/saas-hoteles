@@ -105,7 +105,7 @@ const GENERIC_ERROR = 'No se pudo completar la operación. Intentá de nuevo.';
 
 // invoke() drops the body on non-2xx, so the message is recovered from the
 // error context; a 2xx can still carry `{ error }`.
-async function call<T>(body: Record<string, unknown>): Promise<T> {
+export async function call<T>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.functions.invoke('superadmin', { body });
   if (error) throw new Error(await readFunctionError(error));
   const payload = data as { data?: T; error?: unknown } | null;
