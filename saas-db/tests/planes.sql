@@ -5,7 +5,7 @@
 -- vencer, fn_activar_plan y privilegios. Corre en una transaccion que se
 -- revierte al final: no deja nada en la base.
 --
--- Requisitos: migraciones 0001-0015 y supabase/seed.sql aplicados.
+-- Requisitos: migraciones 0001-0026 y supabase/seed.sql aplicados.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/planes.sql
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -118,7 +118,7 @@ begin
   perform t.ok((select monto from public.pagos_suscripcion where tenant_id = t.g('basico')::bigint) = 150000,
                'el pago toma el precio de lista del plan');
   perform t.ok((select count(*) from public.planes where visible) = 3, 'se ofrecen tres planes');
-  perform t.ok(public.fn_limite(t.g('pro')::bigint, 'habitaciones') = 60
+  perform t.ok(public.fn_limite(t.g('pro')::bigint, 'habitaciones') = 30
                and public.fn_limite(t.g('business')::bigint, 'usuarios') is null,
                'fn_limite lee el plan del hotel (null = ilimitado)');
   perform t.falla($f$select public.fn_activar_plan(1, 'trial', 'mensual')$f$, '22023', 'no se puede activar el trial');
@@ -132,10 +132,10 @@ declare
 begin
   insert into public.habitaciones (tenant_id, numero_habitacion, fk_tipo_habitacion, fk_piso)
   select t.g('basico')::bigint, 100 + g, t.g('basico_th')::bigint, t.g('basico_piso')::bigint
-  from generate_series(1, 20) g;
+  from generate_series(1, 15) g;
   perform t.falla(format(
     'insert into public.habitaciones (tenant_id, numero_habitacion, fk_tipo_habitacion, fk_piso) values (%s, 999, %s, %s)',
-    t.g('basico'), t.g('basico_th'), t.g('basico_piso')), '23514', 'Basico rechaza la habitacion 21');
+    t.g('basico'), t.g('basico_th'), t.g('basico_piso')), '23514', 'Basico rechaza la habitacion 16');
 
   insert into public.habitaciones (tenant_id, numero_habitacion, fk_tipo_habitacion, fk_piso)
   select t.g('business')::bigint, 100 + g, t.g('business_th')::bigint, t.g('business_piso')::bigint
@@ -187,7 +187,7 @@ begin
   perform t.filas('delete from public.tipo_habitacion', 0, 'el trial vencido no borra');
   perform t.volver();
 
-  perform public.fn_activar_plan(t.g('pro')::bigint, 'pro', 'anual', 3500000, 'renovacion');
+  perform public.fn_activar_plan(t.g('pro')::bigint, 'pro', 'anual', 3000000, 'renovacion');
   perform t.ok((select vigente_hasta from public.tenants where id = t.g('pro')::bigint) >= public.hoy_py() + 365,
                'el ciclo anual extiende 12 meses');
   perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
@@ -204,7 +204,7 @@ begin
   perform t.falla('select count(*) from public.pagos_suscripcion', '42501', 'authenticated no lee pagos_suscripcion');
   perform t.ok(t.cuenta('select count(*) from public.planes') = 5, 'authenticated lee el catalogo de planes');
   perform t.falla('update public.planes set precio_mensual = 0', '42501', 'authenticated no modifica planes');
-  perform t.ok(public.fn_max_hoteles_cuenta() = 5, 'fn_max_hoteles_cuenta devuelve el tope del plan administrado');
+  perform t.ok(public.fn_max_hoteles_cuenta() = 1, 'fn_max_hoteles_cuenta devuelve el tope del plan administrado');
   perform t.volver();
 end $$;
 
