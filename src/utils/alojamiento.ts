@@ -106,18 +106,38 @@ export interface DetalleParaAjuste {
   subtotal: number | null;
 }
 
+/**
+ * Delta del cargo de Alojamiento de UNA habitación (el que lleva su
+ * `fk_detalle_reserva`). Se le pasa tal cual a ajustarCargoAlojamiento junto
+ * con el `id_detalle`.
+ */
+export interface AjusteCargoHabitacion {
+  id_detalle: number;
+  /** Delta de noches de esa habitación. */
+  deltaCantidad: number;
+  /** Delta de dinero de esa habitación. */
+  deltaMonto: number;
+}
+
 export interface AjusteAlojamiento {
   /** Subtotales a persistir. Sólo las habitaciones cuyo monto efectivamente cambia. */
   cambios: { id_detalle: number; subtotal: number }[];
   /** Total estimado de la reserva ya recalculado con las noches nuevas. */
   totalEstimado: number;
   /**
-   * Delta de "noches-habitación" para el cargo de Alojamiento del folio: ese
-   * cargo acumula noches × habitaciones (ver folioService.ajustarCargoAlojamiento).
+   * Delta agregado de "noches-habitación" (noches × habitaciones). Es el que
+   * corresponde a un único cargo de Alojamiento que suma todas las habitaciones
+   * (folios legacy); los cargos por habitación usan `porHabitacion`.
    */
   deltaCantidad: number;
   /** Delta de dinero para el mismo cargo. */
   deltaMonto: number;
+  /**
+   * Los mismos deltas abiertos por habitación, para los cargos que se llevan
+   * una fila por habitación. Sólo figuran las habitaciones que cambian; su
+   * suma coincide con `deltaCantidad` y `deltaMonto`.
+   */
+  porHabitacion: AjusteCargoHabitacion[];
 }
 
 /**
@@ -134,6 +154,8 @@ export function calcularAjusteAlojamiento(
   nochesNuevas: number,
 ): AjusteAlojamiento {
   const cambios: { id_detalle: number; subtotal: number }[] = [];
+  const porHabitacion: AjusteCargoHabitacion[] = [];
+  const deltaNoches = nochesNuevas - nochesAnteriores;
   let totalEstimado = 0;
   let deltaMonto = 0;
 
@@ -148,12 +170,22 @@ export function calcularAjusteAlojamiento(
       cambios.push({ id_detalle: detalle.id_detalle, subtotal: subtotalNuevo });
       deltaMonto += subtotalNuevo - subtotalAnterior;
     }
+
+    const deltaMontoHabitacion = subtotalNuevo - subtotalAnterior;
+    if (deltaNoches !== 0 || deltaMontoHabitacion !== 0) {
+      porHabitacion.push({
+        id_detalle: detalle.id_detalle,
+        deltaCantidad: deltaNoches,
+        deltaMonto: deltaMontoHabitacion,
+      });
+    }
   }
 
   return {
     cambios,
     totalEstimado,
-    deltaCantidad: (nochesNuevas - nochesAnteriores) * detalles.length,
+    deltaCantidad: deltaNoches * detalles.length,
     deltaMonto,
+    porHabitacion,
   };
 }

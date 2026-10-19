@@ -59,16 +59,23 @@ export const alojamientoService = {
 
     // Sólo hay folio (y por lo tanto cargo de alojamiento que mover) después
     // del check-in. Antes de eso, alcanza con haber dejado bien los subtotales.
+    //
+    // Se ajusta habitación por habitación: cada una mueve su propio cargo. En
+    // un folio legacy (un único cargo agregado, sin habitación) ajustarCargo
+    // Alojamiento acumula esos mismos deltas sobre el cargo agregado.
     let folioAjustado = false;
-    if (ajuste.deltaCantidad !== 0 || ajuste.deltaMonto !== 0) {
+    if (ajuste.porHabitacion.length > 0) {
       const folio = await folioService.getFolioByReserva(params.reservationId);
       if (folio) {
-        await folioService.ajustarCargoAlojamiento(
-          folio.id_folio,
-          ajuste.deltaCantidad,
-          ajuste.deltaMonto,
-          params.fkUsuario,
-        );
+        for (const habitacion of ajuste.porHabitacion) {
+          await folioService.ajustarCargoAlojamiento(
+            folio.id_folio,
+            habitacion.deltaCantidad,
+            habitacion.deltaMonto,
+            params.fkUsuario,
+            habitacion.id_detalle,
+          );
+        }
         folioAjustado = true;
       }
     }

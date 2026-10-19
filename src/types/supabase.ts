@@ -294,6 +294,7 @@ export type Database = {
           estado: string | null // 'ACTIVO' (visible) | 'INACTIVO' (eliminado lógico) | null (registros anteriores sin estado)
           fecha_cargo: string | null
           fk_concepto: number
+          fk_detalle_reserva: number | null // habitación a la que se atribuye; null = cargo general o legacy
           fk_folio: number
           fk_usuario: number
           id_cargo: number
@@ -305,6 +306,7 @@ export type Database = {
           estado?: string | null // 'ACTIVO' | 'INACTIVO'
           fecha_cargo?: string | null
           fk_concepto: number
+          fk_detalle_reserva?: number | null
           fk_folio: number
           fk_usuario: number
           id_cargo?: never
@@ -316,6 +318,7 @@ export type Database = {
           estado?: string | null // 'ACTIVO' | 'INACTIVO'
           fecha_cargo?: string | null
           fk_concepto?: number
+          fk_detalle_reserva?: number | null
           fk_folio?: number
           fk_usuario?: number
           id_cargo?: never
@@ -329,6 +332,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "conceptos"
             referencedColumns: ["id_concepto"]
+          },
+          {
+            foreignKeyName: "cargos_folio_fk_detalle_reserva_fkey"
+            columns: ["fk_detalle_reserva"]
+            isOneToOne: false
+            referencedRelation: "detalle_reservas"
+            referencedColumns: ["id_detalle"]
           },
           {
             foreignKeyName: "cargos_folio_fk_folio_fkey"

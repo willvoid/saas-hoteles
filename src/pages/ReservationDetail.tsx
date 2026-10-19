@@ -360,15 +360,21 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
 
   // Sincroniza el cargo automático de "Alojamiento" del folio cuando se
   // agrega, edita o quita una habitación después del check-in (antes de eso
-  // no hay folio ni cargo que ajustar). Best-effort: si falla, no bloquea la
-  // acción sobre la habitación, sólo avisa por consola.
-  const sincronizarCargoAlojamiento = async (deltaCantidad: number, deltaMontoTotal: number) => {
+  // no hay folio ni cargo que ajustar). Ajusta sólo el cargo de esa habitación
+  // (`idDetalle`); en un folio legacy con cargo agregado, ajustarCargoAlojamiento
+  // lo aplica sobre ese cargo. Best-effort: si falla, no bloquea la acción
+  // sobre la habitación, sólo avisa por consola.
+  const sincronizarCargoAlojamiento = async (
+    idDetalle: number,
+    deltaCantidad: number,
+    deltaMontoTotal: number,
+  ) => {
     if (toCanonicalEstado(reserva?.estado) !== 'Check-in') return;
     try {
       const folio = await folioService.getFolioByReserva(reservationId);
       if (!folio) return;
       const fkUsuario = currentUser?.id_usuario || currentUser?.id || 0;
-      await folioService.ajustarCargoAlojamiento(folio.id_folio, deltaCantidad, deltaMontoTotal, fkUsuario);
+      await folioService.ajustarCargoAlojamiento(folio.id_folio, deltaCantidad, deltaMontoTotal, fkUsuario, idDetalle);
     } catch (e: any) {
       console.warn('No se pudo sincronizar el cargo de alojamiento:', e.message);
     }
@@ -464,11 +470,11 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
         // Las noches no cambian (fechas de la reserva, compartidas por todas
         // las habitaciones); sólo puede variar el monto (precio/tarifa nueva).
         if (original) {
-          await sincronizarCargoAlojamiento(0, subtotal - Number(original.subtotal));
+          await sincronizarCargoAlojamiento(editingDetalleId, 0, subtotal - Number(original.subtotal));
         }
         setSuccess('Habitación actualizada.');
       } else {
-        await ReservationService.createDetalleReserva({
+        const creado = await ReservationService.createDetalleReserva({
           fk_reserva: reservationId,
           fk_habitacion: fkHabitacion,
           fk_tarifa: fkTarifa,
@@ -488,7 +494,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
           });
         } catch (e: any) { console.warn('No se pudo registrar el alta de habitación en historial:', e.message); }
         // Habitación agregada después del check-in: suma su alojamiento al folio.
-        await sincronizarCargoAlojamiento(nights, subtotal);
+        await sincronizarCargoAlojamiento(creado.id_detalle, nights, subtotal);
         setSuccess('Habitación agregada.');
       }
 
@@ -535,7 +541,7 @@ export default function ReservationDetail({ reservationId, onBack, currentUser, 
         // menos que el rango completo si se agregó a mitad de estadía en
         // Check-in) en vez de asumir el rango completo de la reserva.
         const nights = deriveNightsFromSubtotal(Number(original.subtotal), Number(original.precio_unitario));
-        await sincronizarCargoAlojamiento(-nights, -Number(original.subtotal));
+        await sincronizarCargoAlojamiento(id, -nights, -Number(original.subtotal));
       }
       setSuccess('Habitación quitada.');
       await syncReservationTotal();

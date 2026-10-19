@@ -214,14 +214,23 @@ export const folioService = {
   // cantidad y combina el monto en la fila existente, recalculando el precio
   // unitario como promedio ponderado (para no romper el invariante
   // cantidad * monto_unitario = monto_total que usa handleUpdateCargo).
+  //
+  // La clave de fusión incluye la habitación (fk_detalle_reserva): el mismo
+  // concepto en dos habitaciones distintas son dos filas, y un cargo sin
+  // habitación (NULL, general de la reserva) sólo se fusiona con otro NULL.
   async addCargo(cargo: CargoFolioInsert, opciones?: { rechazarDuplicado?: boolean }) {
-    const { data: existente, error: findError } = await supabase
+    const fkDetalle = cargo.fk_detalle_reserva ?? null;
+    const consulta = supabase
       .from('cargos_folio')
       .select('*, concepto:conceptos(nombre)')
       .eq('fk_folio', cargo.fk_folio)
       .eq('fk_concepto', cargo.fk_concepto)
-      .eq('estado', 'ACTIVO')
-      .maybeSingle();
+      .eq('estado', 'ACTIVO');
+    const { data: existente, error: findError } = await (
+      fkDetalle === null
+        ? consulta.is('fk_detalle_reserva', null)
+        : consulta.eq('fk_detalle_reserva', fkDetalle)
+    ).maybeSingle();
 
     if (findError) throw findError;
 
@@ -250,7 +259,7 @@ export const folioService = {
     } else {
       const { data: insertado, error } = await supabase
         .from('cargos_folio')
-        .insert({ ...cargo, estado: 'ACTIVO' })
+        .insert({ ...cargo, fk_detalle_reserva: fkDetalle, estado: 'ACTIVO' })
         .select()
         .single();
 
@@ -267,8 +276,9 @@ export const folioService = {
 
   // Cargo manual libre (recepción): concepto + cantidad + precio a elección, sin
   // tomar el arancel del producto. Reutiliza addCargo: si el concepto ya está
-  // en el folio se combina con esa fila (precio unitario promedio), porque el
-  // resto de las pantallas asume una sola fila ACTIVA por concepto (maybeSingle).
+  // en el folio (y en la misma habitación, o ambos sin habitación) se combina
+  // con esa fila (precio unitario promedio), porque el resto de las pantallas
+  // asume una sola fila ACTIVA por concepto y habitación (maybeSingle).
   // Sólo en folios abiertos; el registro en la bitácora lo hace quien llama.
   async addCargoManual(cargo: {
     fk_folio: number;
@@ -276,6 +286,8 @@ export const folioService = {
     cantidad: number;
     monto_unitario: number;
     fk_usuario: number;
+    /** Habitación a la que se atribuye el cargo; omitido/null = general de la reserva. */
+    fk_detalle_reserva?: number | null;
   }) {
     const { data: folio, error: folioError } = await supabase
       .from('folios')
@@ -420,42 +432,62 @@ export const folioService = {
   },
 
   // Mantiene sincronizado el cargo automático de "Alojamiento" de un folio
-  // ante altas, bajas o ediciones de habitaciones. Todas las habitaciones de
-  // la reserva comparten un único cargo de Alojamiento (mismo concepto): se
-  // ajusta por diferencia (delta) en vez de rastrear un cargo por habitación,
-  // porque cargos_folio no tiene una columna que lo vincule a un detalle de
-  // reserva puntual.
+  // ante altas, bajas o ediciones de habitaciones o de fechas. Se ajusta por
+  // diferencia (delta) sobre el cargo existente en vez de recalcularlo.
   //
-  // - Sin cargo activo todavía y delta positivo: lo crea (caso check-in o
-  //   habitación agregada al primer cargo del folio).
-  // - Con cargo activo: suma el delta a cantidad/monto_total y recalcula el
-  //   precio unitario como promedio, preservando cantidad * monto_unitario =
-  //   monto_total (el mismo invariante que respeta addCargo).
-  // - Si el delta lo deja en cantidad o monto <= 0 (se fueron todas las
-  //   noches que cubría), se da de baja el cargo en vez de dejarlo en cero.
+  // Dos modos, según el `id_detalle` y lo que haya en el folio:
   //
-  // Asunción: las noches de una habitación sólo cambian si se le quita del
-  // todo (no hay forma de editar las fechas de una habitación individual sin
-  // tocar las fechas de la reserva completa, que son compartidas).
+  // - Por habitación (con `id_detalle`): cada habitación tiene su propio cargo
+  //   ACTIVO de Alojamiento, el que lleva su `fk_detalle_reserva`. Se ajusta
+  //   sólo ése. Si todavía no existe y el delta es positivo, se crea (check-in
+  //   ya hecho y habitación agregada después).
+  // - Agregado / legacy (sin `id_detalle`, o con `id_detalle` pero sin cargo
+  //   propio mientras el folio conserva un cargo de Alojamiento con
+  //   fk_detalle_reserva NULL): los folios multi-habitación anteriores a la
+  //   atribución por habitación tienen UN cargo que suma todas las
+  //   habitaciones; ahí se sigue ajustando ese cargo único, sin repartirlo.
+  //
+  // En ambos modos, con cargo activo se suma el delta a cantidad/monto_total y
+  // se recalcula el precio unitario como promedio, preservando cantidad *
+  // monto_unitario = monto_total (el mismo invariante que respeta addCargo). Si
+  // el delta lo deja en cantidad o monto <= 0 (se fueron todas las noches que
+  // cubría), se da de baja el cargo en vez de dejarlo en cero.
   async ajustarCargoAlojamiento(
     fk_folio: number,
     deltaCantidad: number,
     deltaMontoTotal: number,
     fk_usuario: number,
+    id_detalle?: number | null,
   ) {
     if (deltaCantidad === 0 && deltaMontoTotal === 0) return null;
 
     const concepto = await this.getOrCrearConceptoAlojamiento();
 
-    const { data: existente, error: findError } = await supabase
-      .from('cargos_folio')
-      .select('*')
-      .eq('fk_folio', fk_folio)
-      .eq('fk_concepto', concepto.id_concepto)
-      .eq('estado', 'ACTIVO')
-      .maybeSingle();
+    const buscarCargo = async (fkDetalle: number | null) => {
+      const consulta = supabase
+        .from('cargos_folio')
+        .select('*')
+        .eq('fk_folio', fk_folio)
+        .eq('fk_concepto', concepto.id_concepto)
+        .eq('estado', 'ACTIVO');
+      const { data, error } = await (
+        fkDetalle === null
+          ? consulta.is('fk_detalle_reserva', null)
+          : consulta.eq('fk_detalle_reserva', fkDetalle)
+      ).maybeSingle();
+      if (error) throw error;
+      return data;
+    };
 
-    if (findError) throw findError;
+    const fkDetalleHabitacion = id_detalle ?? null;
+    let existente = fkDetalleHabitacion === null ? null : await buscarCargo(fkDetalleHabitacion);
+    // Sin cargo propio de la habitación: si el folio tiene el cargo agregado
+    // legacy, la habitación vive ahí; si no, se crea uno nuevo para ella.
+    let fkDetalleNuevo = fkDetalleHabitacion;
+    if (!existente) {
+      existente = await buscarCargo(null);
+      if (existente) fkDetalleNuevo = null;
+    }
 
     if (!existente) {
       if (deltaMontoTotal <= 0) return null;
@@ -463,6 +495,7 @@ export const folioService = {
       return this.addCargo({
         fk_folio,
         fk_concepto: concepto.id_concepto,
+        fk_detalle_reserva: fkDetalleNuevo,
         cantidad,
         monto_unitario: deltaMontoTotal / cantidad,
         monto_total: deltaMontoTotal,

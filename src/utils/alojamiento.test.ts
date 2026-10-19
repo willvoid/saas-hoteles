@@ -98,6 +98,63 @@ describe('calcularAjusteAlojamiento', () => {
   });
 });
 
+describe('calcularAjusteAlojamiento: deltas por habitación', () => {
+  it('reparte el delta de noches y de dinero en cada habitación', () => {
+    // 2 habitaciones a 100.000 y 150.000, de 2 a 4 noches.
+    const detalles = [hab(1, 100_000, 200_000), hab(2, 150_000, 300_000)];
+    const ajuste = calcularAjusteAlojamiento(detalles, 2, 4);
+
+    expect(ajuste.porHabitacion).toEqual([
+      { id_detalle: 1, deltaCantidad: 2, deltaMonto: 200_000 },
+      { id_detalle: 2, deltaCantidad: 2, deltaMonto: 300_000 },
+    ]);
+  });
+
+  it('la suma de los deltas por habitación coincide con el delta agregado', () => {
+    const detalles = [hab(1, 100_000, 200_000), hab(2, 150_000, 300_000), hab(3, 80_000, 160_000)];
+    const ajuste = calcularAjusteAlojamiento(detalles, 2, 5);
+
+    const cantidad = ajuste.porHabitacion.reduce((acc, h) => acc + h.deltaCantidad, 0);
+    const monto = ajuste.porHabitacion.reduce((acc, h) => acc + h.deltaMonto, 0);
+    expect(cantidad).toBe(ajuste.deltaCantidad);
+    expect(monto).toBe(ajuste.deltaMonto);
+  });
+
+  it('acortar la estadía deja los deltas de cada habitación en negativo', () => {
+    const ajuste = calcularAjusteAlojamiento([hab(7, 100_000, 400_000)], 4, 1);
+
+    expect(ajuste.porHabitacion).toEqual([{ id_detalle: 7, deltaCantidad: -3, deltaMonto: -300_000 }]);
+  });
+
+  it('el delta de dinero sale del subtotal guardado de cada habitación (una agregada a mitad de estadía)', () => {
+    // La 2 se sumó con 1 noche cobrada (subtotal 150.000); la 1 cubre las 3.
+    // Al pasar a 4 noches cada una se recalcula contra su propio subtotal.
+    const detalles = [hab(1, 100_000, 300_000), hab(2, 150_000, 150_000)];
+    const ajuste = calcularAjusteAlojamiento(detalles, 3, 4);
+
+    expect(ajuste.porHabitacion).toEqual([
+      { id_detalle: 1, deltaCantidad: 1, deltaMonto: 100_000 },
+      { id_detalle: 2, deltaCantidad: 1, deltaMonto: 450_000 },
+    ]);
+  });
+
+  it('omite las habitaciones que no cambian', () => {
+    const ajuste = calcularAjusteAlojamiento([hab(1, 100_000, 200_000), hab(2, 150_000, 300_000)], 2, 2);
+
+    expect(ajuste.porHabitacion).toEqual([]);
+  });
+
+  it('corrige el monto desincronizado de una sola habitación sin tocar las noches', () => {
+    const ajuste = calcularAjusteAlojamiento([hab(1, 100_000, 300_000), hab(2, 150_000, 0)], 3, 3);
+
+    expect(ajuste.porHabitacion).toEqual([{ id_detalle: 2, deltaCantidad: 0, deltaMonto: 450_000 }]);
+  });
+
+  it('sin habitaciones no hay deltas por habitación', () => {
+    expect(calcularAjusteAlojamiento([], 2, 5).porHabitacion).toEqual([]);
+  });
+});
+
 describe('construirDesgloseAlojamiento', () => {
   const detalle = (id: number, precio: number, numero: number, extra = {}) => ({
     id_detalle: id,
