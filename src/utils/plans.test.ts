@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { annualSavings, limitLabel, planFeatures } from './plans';
+import { annualSavings, hotelsLabel, limitLabel, planFeatures } from './plans';
 import type { PublicPlan } from './plans';
 
 const base: PublicPlan = {
@@ -12,6 +12,10 @@ const base: PublicPlan = {
   max_usuarios: 5,
   max_hoteles: 1,
   mod_contabilidad: false,
+  precio_hotel_adicional: null,
+  precio_hotel_adicional_anual: null,
+  contacto_ventas: false,
+  modulos: [],
 };
 
 describe('annualSavings', () => {
@@ -55,12 +59,29 @@ describe('planFeatures', () => {
     expect(f).toEqual([
       'Habitaciones ilimitadas',
       'Usuarios ilimitados',
-      'Hoteles ilimitados por cuenta',
+      'Hoteles según contrato',
       'Módulo de contabilidad incluido',
     ]);
   });
 
-  it('never mentions electronic invoicing', () => {
+  it('never mentions electronic invoicing in the capacity summary', () => {
     expect(planFeatures(base).join(' ')).not.toMatch(/sifen|electr/i);
+  });
+});
+
+describe('hotelsLabel', () => {
+  it('shows the extra-hotel price when the plan has one', () => {
+    expect(hotelsLabel({ ...base, precio_hotel_adicional: 180000 })).toMatch(
+      /^1 hotel incluido · \+.*180\.000.*\/mes por hotel adicional$/,
+    );
+  });
+
+  it('says by contract when unlimited or sold by sales', () => {
+    expect(hotelsLabel({ ...base, max_hoteles: null })).toBe('Hoteles según contrato');
+    expect(hotelsLabel({ ...base, contacto_ventas: true })).toBe('Hoteles según contrato');
+  });
+
+  it('falls back to a plain count', () => {
+    expect(hotelsLabel(base)).toBe('1 hotel por cuenta');
   });
 });

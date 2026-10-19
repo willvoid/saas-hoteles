@@ -388,6 +388,19 @@
   color: var(--success-light);
 }
 
+.home-plan-modules-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.home-plan-modules {
+  margin-top: 0;
+}
+
 .home-plan-cta {
   width: 100%;
 }

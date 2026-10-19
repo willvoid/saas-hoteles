@@ -23,5 +23,9 @@ export async function getPublicPlans(): Promise<PublicPlan[]> {
     max_usuarios: toNullableNumber(row.max_usuarios),
     max_hoteles: toNullableNumber(row.max_hoteles),
     mod_contabilidad: Boolean(row.mod_contabilidad),
+    precio_hotel_adicional: toNullableNumber(row.precio_hotel_adicional),
+    precio_hotel_adicional_anual: toNullableNumber(row.precio_hotel_adicional_anual),
+    contacto_ventas: Boolean(row.contacto_ventas),
+    modulos: Array.isArray(row.modulos) ? row.modulos.map(String) : [],
   }));
 }

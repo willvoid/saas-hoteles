@@ -12,6 +12,10 @@ const plan = (codigo: string): PublicPlan => ({
   max_usuarios: null,
   max_hoteles: null,
   mod_contabilidad: false,
+  precio_hotel_adicional: null,
+  precio_hotel_adicional_anual: null,
+  contacto_ventas: false,
+  modulos: [],
 });
 
 describe('buildWhatsAppUrl', () => {

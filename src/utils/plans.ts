@@ -1,5 +1,6 @@
 // Pure helpers for the public plans shown on the landing. Money formatting is
 // shared: use `formatGs` from ./currency.
+import { formatGs } from './currency';
 
 // Row of the public RPC fn_planes_publicos(). A null limit means unlimited.
 export interface PublicPlan {
@@ -12,6 +13,12 @@ export interface PublicPlan {
   max_usuarios: number | null;
   max_hoteles: number | null;
   mod_contabilidad: boolean;
+  precio_hotel_adicional: number | null;
+  precio_hotel_adicional_anual: number | null;
+  // true: the plan is sold by the sales team and the price is a "from" price.
+  contacto_ventas: boolean;
+  // Texts of what the plan includes, authored in the planes table.
+  modulos: string[];
 }
 
 export interface AnnualSavings {
@@ -41,11 +48,23 @@ export function limitLabel(value: number | null, singular: string, plural: strin
   return `${value} ${value === 1 ? singular : plural}`;
 }
 
+// Hotels line: unlimited-by-contract, one included plus a per-hotel price, or a plain count.
+export function hotelsLabel(
+  plan: Pick<PublicPlan, 'max_hoteles' | 'contacto_ventas' | 'precio_hotel_adicional'>,
+): string {
+  if (plan.max_hoteles === null || plan.contacto_ventas) return 'Hoteles según contrato';
+  if (plan.precio_hotel_adicional !== null) {
+    return `${limitLabel(plan.max_hoteles, 'hotel', 'hoteles')} incluido · +${formatGs(plan.precio_hotel_adicional)}/mes por hotel adicional`;
+  }
+  return `${limitLabel(plan.max_hoteles, 'hotel', 'hoteles')} por cuenta`;
+}
+
+// Capacity summary shown first on each card; what the plan includes is in `plan.modulos`.
 export function planFeatures(plan: PublicPlan): string[] {
   return [
     limitLabel(plan.max_habitaciones, 'habitación', 'habitaciones'),
     limitLabel(plan.max_usuarios, 'usuario', 'usuarios'),
-    `${limitLabel(plan.max_hoteles, 'hotel', 'hoteles')} por cuenta`,
+    hotelsLabel(plan),
     plan.mod_contabilidad ? 'Módulo de contabilidad incluido' : 'Sin módulo de contabilidad',
   ];
 }
