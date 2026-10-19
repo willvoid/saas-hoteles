@@ -32,6 +32,8 @@ supabase/migrations/
   0021_reportes_finanzas     RPC de reportes de finanzas (fn_rep_*)
   0022_cargos_extra_checkout horarios por establecimiento, recargos de late check-out / early check-in y RPC atomicas
   0023_fecha_paraguay        hoy_py(): la fecha de hoy en Paraguay en lugar de current_date (UTC)
+  0028_cargos_folio_detalle_reserva  cargos_folio.fk_detalle_reserva: cada cargo del folio puede atribuirse a una habitacion
+  0029_alojamiento_por_habitacion    el alojamiento automatico del primer check-in se carga por habitacion
 supabase/seed.sql            catalogos minimos (solo desarrollo / respaldo)
 tests/aislamiento.sql        suite de aislamiento entre dos tenants (incluye finanzas)
 tests/planes.sql             suite de planes y suscripciones

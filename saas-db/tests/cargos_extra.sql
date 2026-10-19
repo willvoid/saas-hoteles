@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- Suite de cargos extra de check-in / check-out (0022)
+-- Suite de cargos extra de check-in / check-out (0022, 0028, 0029)
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Cubre: config_horarios_establecimiento (RLS, checks), calcular_recargo_horario
 -- (tolerancia, porcentaje, fijo por hora, early check-in, defaults), las RPC
@@ -13,7 +13,7 @@
 -- vencio por mucho: el porcentaje no depende del exceso) o muy futuras (dentro
 -- de la tolerancia: sugerido 0).
 --
--- Requisitos: migraciones 0001-0022 y supabase/seed.sql aplicados.
+-- Requisitos: migraciones 0001-0029 y supabase/seed.sql aplicados.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/cargos_extra.sql
 --
@@ -795,13 +795,21 @@ begin
                'el folio nace abierto y es unico');
   perform t.ok((select count(*) from public.cargos_folio c
                 join public.conceptos k on k.id_concepto = c.fk_concepto and k.tenant_id = c.tenant_id
+                join public.detalle_reservas d
+                  on d.tenant_id = c.tenant_id and d.id_detalle = c.fk_detalle_reserva
                 where c.fk_folio = v_f and k.nombre = 'Alojamiento'
-                  and c.monto_total = 600000 and c.cantidad = 2) = 1,
-               'el RPC carga el Alojamiento automatico (2 noches, 600.000)');
+                  and d.fk_reserva = v_r
+                  and c.monto_total = d.subtotal and c.monto_total = 600000 and c.cantidad = 2) = 1,
+               'el RPC carga el Alojamiento de la habitacion (2 noches, 600.000) atribuido a su detalle');
   perform t.ok((select count(*) from public.cargos_folio c
                 join public.conceptos k on k.id_concepto = c.fk_concepto and k.tenant_id = c.tenant_id
-                where c.fk_folio = v_f and k.nombre = 'Early check-in' and c.monto_total = 75000) = 1,
-               'el early check-in queda como cargo del folio');
+                where c.fk_folio = v_f and k.nombre = 'Alojamiento') = 1,
+               'una habitacion activa genera un unico cargo de Alojamiento');
+  perform t.ok((select count(*) from public.cargos_folio c
+                join public.conceptos k on k.id_concepto = c.fk_concepto and k.tenant_id = c.tenant_id
+                where c.fk_folio = v_f and k.nombre = 'Early check-in' and c.monto_total = 75000
+                  and c.fk_detalle_reserva is null) = 1,
+               'el early check-in queda como cargo general del folio (sin habitacion)');
   perform t.ok((select total_acumulado from public.folios where id_folio = v_f) = 675000,
                'el total del folio suma alojamiento y recargo');
   perform t.ok((select count(*) from public.historial_estancia
@@ -809,6 +817,64 @@ begin
                   and fk_usuario = t.g('a_rec_id')::bigint
                   and descripcion like 'Early check-in:%') = 1,
                'historial RECARGO_APLICADO del early check-in con actor');
+end $$;
+
+-- Reserva con varias habitaciones: un cargo de Alojamiento por habitacion
+-- activa, cada uno atribuido a su detalle. La habitacion inactiva no cobra y el
+-- recargo sigue siendo un cargo general. El total del folio no cambia respecto
+-- del cargo agregado: suma de subtotales activos + recargo.
+do $$
+declare
+  v_r bigint; v jsonb; v_f bigint; v_d1 bigint; v_d2 bigint; v_d3 bigint;
+begin
+  v_r := t.reserva('Confirmada', date '2099-04-01', date '2099-04-04', 300000);
+  select id_detalle into v_d1 from public.detalle_reservas where fk_reserva = v_r;
+  insert into public.detalle_reservas
+    (tenant_id, fk_reserva, fk_habitacion, fk_tarifa, precio_unitario, subtotal)
+  values
+    (t.g('ta')::bigint, v_r, t.g('a_hab')::bigint, t.g('a_tarifa')::bigint, 450000, 1350000)
+  returning id_detalle into v_d2;
+  insert into public.detalle_reservas
+    (tenant_id, fk_reserva, fk_habitacion, fk_tarifa, precio_unitario, subtotal, estado)
+  values
+    (t.g('ta')::bigint, v_r, t.g('a_hab')::bigint, t.g('a_tarifa')::bigint, 999000, 2997000, 'Inactivo')
+  returning id_detalle into v_d3;
+
+  perform t.actuar(t.g('a_rec'), t.g('ta')::bigint);
+  v := public.checkin_con_recargo(v_r);
+  perform t.volver();
+  v_f := (v ->> 'id_folio')::bigint;
+
+  perform t.ok((select count(*) from public.cargos_folio c
+                join public.conceptos k on k.id_concepto = c.fk_concepto and k.tenant_id = c.tenant_id
+                where c.fk_folio = v_f and k.nombre = 'Alojamiento') = 2,
+               'dos habitaciones activas: dos cargos de Alojamiento');
+  perform t.ok((select count(*) from public.cargos_folio c
+                join public.conceptos k on k.id_concepto = c.fk_concepto and k.tenant_id = c.tenant_id
+                where c.fk_folio = v_f and k.nombre = 'Alojamiento'
+                  and c.fk_detalle_reserva = v_d1 and c.cantidad = 3
+                  and c.monto_total = 900000 and c.monto_unitario = 300000) = 1,
+               'el cargo de la primera habitacion lleva su detalle, 3 noches y su subtotal');
+  perform t.ok((select count(*) from public.cargos_folio c
+                join public.conceptos k on k.id_concepto = c.fk_concepto and k.tenant_id = c.tenant_id
+                where c.fk_folio = v_f and k.nombre = 'Alojamiento'
+                  and c.fk_detalle_reserva = v_d2 and c.cantidad = 3
+                  and c.monto_total = 1350000 and c.monto_unitario = 450000) = 1,
+               'el cargo de la segunda habitacion lleva su detalle, 3 noches y su subtotal');
+  perform t.ok(not exists (select 1 from public.cargos_folio where fk_folio = v_f and fk_detalle_reserva = v_d3),
+               'la habitacion inactiva no genera cargo');
+  perform t.ok((select count(*) from public.cargos_folio c
+                join public.conceptos k on k.id_concepto = c.fk_concepto and k.tenant_id = c.tenant_id
+                where c.fk_folio = v_f and k.nombre = 'Early check-in'
+                  and c.monto_total = (v ->> 'monto_final')::numeric
+                  and c.fk_detalle_reserva is null) = 1
+               and (v ->> 'monto_final')::numeric > 0,
+               'el recargo queda como cargo general aunque haya varias habitaciones');
+  perform t.ok((select total_acumulado from public.folios where id_folio = v_f)
+                 = 900000 + 1350000 + (v ->> 'monto_final')::numeric
+               and (select sum(monto_total) from public.cargos_folio where fk_folio = v_f)
+                 = (select total_acumulado from public.folios where id_folio = v_f),
+               'el total del folio suma los subtotales activos y el recargo, igual que los cargos');
 end $$;
 
 -- Check-in exonerado y check-in sin recargo (entrada ya vencida).
@@ -898,6 +964,64 @@ begin
 
   perform t.ok((select estado from public.reservas where id_reserva = t.g('r_conf')::bigint) = 'Confirmada',
                'la reserva de A sigue intacta tras los intentos de B');
+end $$;
+
+-- cargos_folio.fk_detalle_reserva (0028): la FK compuesta con tenant_id rechaza
+-- una habitacion de otro hotel. Un detalle de otra reserva del mismo hotel si se
+-- acepta (la FK no valida la reserva; eso lo resuelven los servicios).
+do $$
+declare
+  v_tb bigint := t.g('tb')::bigint;
+  v_edif bigint; v_piso bigint; v_th bigint; v_hab bigint; v_tarifa bigint; v_cli bigint;
+  v_usr bigint; v_rb bigint; v_db bigint; v_ra bigint; v_fa bigint; v_concepto bigint;
+  v_cn text;
+begin
+  insert into public.edificios (tenant_id, nombre, estado, fk_sucursal)
+    values (v_tb, 'Edificio B', 'Activo', t.g('b_estab')::bigint) returning id into v_edif;
+  insert into public.pisos (tenant_id, numero, estado, fk_edificio)
+    values (v_tb, 1, 'Activo', v_edif) returning id into v_piso;
+  insert into public.tipo_habitacion (tenant_id, nombre, descripcion, capacidad)
+    values (v_tb, 'Doble', 'Habitacion doble', 2) returning id into v_th;
+  insert into public.habitaciones (tenant_id, numero_habitacion, fk_tipo_habitacion, fk_piso)
+    values (v_tb, 201, v_th, v_piso) returning id into v_hab;
+  insert into public.tarifas (tenant_id, nombre, precio_base, estado, fk_tipo_habitacion, fecha_inicio)
+    values (v_tb, 'Base', 100000, 'Activa', v_th, date '2020-01-01') returning id into v_tarifa;
+  insert into public.clientes (tenant_id, razon_social, documento, celular, es_proveedor_del_estado)
+    values (v_tb, 'Cliente CX B', 'CI-CXB', '0982', false) returning id_cliente into v_cli;
+  select id_usuario into v_usr from public.usuario where tenant_id = v_tb limit 1;
+  insert into public.reservas
+    (tenant_id, fecha_entrada, fecha_salida, estado, fk_cliente, fk_usuario, origen)
+  values (v_tb, date '2099-06-01', date '2099-06-02', 'Confirmada', v_cli, v_usr, 'TEST')
+  returning id_reserva into v_rb;
+  insert into public.detalle_reservas
+    (tenant_id, fk_reserva, fk_habitacion, fk_tarifa, precio_unitario, subtotal)
+  values (v_tb, v_rb, v_hab, v_tarifa, 100000, 100000)
+  returning id_detalle into v_db;
+
+  v_ra := t.reserva('Confirmada', date '2099-05-01', date '2099-05-02', 300000);
+  v_fa := t.folio(v_ra, 0);
+  select id_concepto into v_concepto from public.conceptos
+  where tenant_id = t.g('ta')::bigint and nombre = 'Early check-in';
+
+  begin
+    insert into public.cargos_folio
+      (tenant_id, fk_folio, fk_concepto, cantidad, monto_unitario, monto_total, fk_usuario, fk_detalle_reserva)
+    values
+      (t.g('ta')::bigint, v_fa, v_concepto, 1, 1, 1, t.g('a_admin_id')::bigint, v_db);
+  exception when foreign_key_violation then
+    get stacked diagnostics v_cn = constraint_name;
+  end;
+  perform t.ok(v_cn = 'cargos_folio_fk_detalle_reserva_fkey',
+               'un cargo de A no puede apuntar a la habitacion de otro hotel (FK compuesta)');
+
+  insert into public.cargos_folio
+    (tenant_id, fk_folio, fk_concepto, cantidad, monto_unitario, monto_total, fk_usuario, fk_detalle_reserva)
+  select t.g('ta')::bigint, v_fa, v_concepto, 1, 1, 1, t.g('a_admin_id')::bigint, d.id_detalle
+  from public.detalle_reservas d
+  where d.tenant_id = t.g('ta')::bigint and d.fk_reserva = v_ra;
+  perform t.ok((select count(*) from public.cargos_folio
+                where fk_folio = v_fa and fk_detalle_reserva is not null) = 1,
+               'un cargo con una habitacion del mismo hotel se acepta');
 end $$;
 
 -- Un tenant nuevo recibe los conceptos por el trigger de alta, sin pasar por
