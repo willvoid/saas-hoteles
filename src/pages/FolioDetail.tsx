@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
-import { folioService, Concepto } from '../services/folioService';
+import { folioService, Concepto, type CargoFolio } from '../services/folioService';
 import { DataTable, Column } from '../components/DataTable';
 import { ModuleLayout } from '../components/ModuleLayout';
 import { SearchBox } from '../components/SearchBox';
@@ -12,9 +12,19 @@ import { ReservationService } from '../services/reservationService';
 import { normalizeRole } from '../utils/permissions';
 import { CargoManualDialog } from '../components/CargoManualDialog';
 import { useCargoManual } from '../hooks/useCargoManual';
+import {
+  detectarDesfaseAlojamiento,
+  etiquetaHabitacion,
+  mostrarColumnaHabitacion,
+  opcionesHabitacionCargo,
+  ordenarCargosPorHabitacion,
+} from '../utils/cargosPorHabitacion';
 import { ArrowLeft, Plus, Wallet, Receipt, AlertTriangle, BedDouble, Unlock, Lock, PencilLine } from 'lucide-react';
 import '../index.css';
 import { COLORS, tint } from '../constants/colors';
+
+/** Cargo del folio tal como lo trae getFolioById (con su concepto embebido). */
+type CargoConConcepto = CargoFolio & { concepto?: Concepto | null };
 
 function ModalPortal({ children }: { children: React.ReactNode }) {
   return ReactDOM.createPortal(children, document.body);
@@ -94,6 +104,13 @@ export default function FolioDetail({
   // y alimentan su tabla propia.
   const [detallesReserva, setDetallesReserva] = useState<any[]>([]);
 
+  const desgloseAlojamiento = construirDesgloseAlojamiento(
+    detallesReserva,
+    folio?.reserva?.fecha_entrada || '',
+    folio?.reserva?.fecha_salida || '',
+  );
+  const habitaciones = desgloseAlojamiento.filas;
+
   // Cargo manual libre (concepto + monto + motivo), registrado en la bitácora.
   // El alojamiento tiene su propia fuente de verdad, así que no se ofrece acá.
   const cargoManual = useCargoManual({
@@ -101,6 +118,7 @@ export default function FolioDetail({
     fkReserva: folio?.fk_reserva ?? null,
     idUsuario: currentUser?.id_usuario || currentUser?.id || null,
     conceptos: conceptos.filter(c => !esCargoDeAlojamiento(c.nombre)),
+    opcionesHabitacion: opcionesHabitacionCargo(habitaciones),
   });
 
   const handleGuardarCargoManual = async () => {
@@ -192,14 +210,11 @@ export default function FolioDetail({
   // El alojamiento tiene su propia tabla y su propia fuente de verdad (las
   // habitaciones de la reserva), así que queda fuera de la lista de consumos:
   // ni se muestra ahí, ni entra al modal de "Cargar o editar consumo".
-  const cargoAlojamiento = cargosVigentes.find((c: any) => esCargoDeAlojamiento(c.concepto?.nombre));
   const cargosConsumo = cargosVigentes.filter((c: any) => !esCargoDeAlojamiento(c.concepto?.nombre));
 
-  const desgloseAlojamiento = construirDesgloseAlojamiento(
-    detallesReserva,
-    folio?.reserva?.fecha_entrada || '',
-    folio?.reserva?.fecha_salida || '',
-  );
+  // Cada habitación se compara con su propio cargo de Alojamiento; un cargo
+  // agregado (legacy, sin habitación) se compara contra las que cubre.
+  const desfaseAlojamiento = detectarDesfaseAlojamiento(cargosVigentes, habitaciones);
 
   /** Convierte un cargo guardado del folio en una línea editable del modal. */
   const cargoALinea = (c: any): LineaConsumo => ({
@@ -443,14 +458,28 @@ export default function FolioDetail({
 
   // Tabla de sólo lectura: agregar, editar y quitar consumos se hace desde
   // "Cargar o editar consumo", que es el único lugar que toca el folio.
+  const activeCargos = ordenarCargosPorHabitacion(cargosConsumo as CargoConConcepto[], habitaciones);
+  const columnaHabitacion: Column<any>[] = mostrarColumnaHabitacion(activeCargos, habitaciones)
+    ? [{
+        header: 'Habitación',
+        render: (c) =>
+          c.fk_detalle_reserva == null ? (
+            <span style={{ color: 'var(--text-secondary)' }}>{etiquetaHabitacion(null, habitaciones)}</span>
+          ) : (
+            <span className="status-badge" style={{ '--badge-color': COLORS.primaryLight } as React.CSSProperties}>
+              {etiquetaHabitacion(c.fk_detalle_reserva, habitaciones)}
+            </span>
+          ),
+      }]
+    : [];
   const cargosColumns: Column<any>[] = [
     { header: 'Concepto', render: (c) => <span style={{ fontWeight: 600 }}>{c.concepto?.nombre || `ID: ${c.fk_concepto}`}</span> },
+    ...columnaHabitacion,
     { header: 'Cant.', align: 'center', render: (c) => c.cantidad },
     { header: 'P. Unit.', align: 'right', render: (c) => formatGs(c.monto_unitario) },
     { header: 'Total', align: 'right', render: (c) => <span style={{ fontWeight: 700, color: COLORS.success }}>{formatGs(c.monto_total)}</span> },
   ];
 
-  const activeCargos = cargosConsumo;
   const filteredCargos = cargoSearch.trim()
     ? activeCargos.filter((c: any) =>
         (c.concepto?.nombre || '').toLowerCase().includes(cargoSearch.trim().toLowerCase())
@@ -591,7 +620,7 @@ export default function FolioDetail({
 
         {/* El cargo del folio y el cálculo deberían coincidir siempre: si no,
             algo quedó desincronizado y conviene que se vea. */}
-        {cargoAlojamiento && Number(cargoAlojamiento.monto_total) !== desgloseAlojamiento.total && (
+        {desfaseAlojamiento.hayDesfase && (
           <div
             style={{
               display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 16,
@@ -601,11 +630,29 @@ export default function FolioDetail({
             }}
           >
             <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-            <span>
-              El folio tiene cargado {formatGs(cargoAlojamiento.monto_total)} de
-              alojamiento, distinto de los {formatGs(desgloseAlojamiento.total)} que suman las
-              habitaciones. Volvé a guardar las fechas de la reserva para reajustarlo.
-            </span>
+            {desfaseAlojamiento.modo === 'legacy' ? (
+              <span>
+                El folio tiene cargado {formatGs(desfaseAlojamiento.desfases[0].cargado)} de
+                alojamiento, distinto de los {formatGs(desfaseAlojamiento.desfases[0].calculado)} que suman las
+                habitaciones. Volvé a guardar las fechas de la reserva para reajustarlo.
+              </span>
+            ) : (
+              <span>
+                El alojamiento cargado en el folio difiere del que suman las habitaciones:{' '}
+                {desfaseAlojamiento.desfases
+                  .map((d) => {
+                    const donde =
+                      d.tipo === 'habitacion'
+                        ? `Hab. ${d.habitacion}`
+                        : d.tipo === 'general'
+                          ? 'Alojamiento general'
+                          : 'Hab. retirada';
+                    return `${donde} (cargado ${formatGs(d.cargado)}, debería ser ${formatGs(d.calculado)})`;
+                  })
+                  .join('; ')}
+                . Volvé a guardar las fechas de la reserva para reajustarlo.
+              </span>
+            )}
           </div>
         )}
 
@@ -675,6 +722,8 @@ export default function FolioDetail({
           isOpen={cargoManual.abierto}
           subtitulo={`Folio #${folio.id_folio} · cargo libre con motivo, queda registrado en la bitácora`}
           conceptos={conceptos.filter(c => !esCargoDeAlojamiento(c.nombre))}
+          opcionesHabitacion={opcionesHabitacionCargo(habitaciones)}
+          fkDetalleReserva={cargoManual.fkDetalleReserva}
           fkConcepto={cargoManual.fkConcepto}
           cantidad={cargoManual.cantidad}
           precio={cargoManual.precio}
@@ -685,6 +734,7 @@ export default function FolioDetail({
           puedeGuardar={cargoManual.puedeGuardar}
           error={cargoManual.error}
           onConceptoChange={cargoManual.elegirConcepto}
+          onHabitacionChange={cargoManual.elegirHabitacion}
           onCantidadChange={cargoManual.cambiarCantidad}
           onPrecioChange={cargoManual.cambiarPrecio}
           onMotivoChange={cargoManual.cambiarMotivo}

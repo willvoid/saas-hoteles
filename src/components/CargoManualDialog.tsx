@@ -1,6 +1,7 @@
 import { Modal } from './Modal';
 import AutocompleteConceptos from './AutocompleteConceptos';
 import { formatGs } from '../utils/currency';
+import type { OpcionHabitacionCargo } from '../utils/cargosPorHabitacion';
 
 interface ConceptoOpcion {
   id_concepto: number;
@@ -12,6 +13,13 @@ interface CargoManualDialogProps {
   isOpen: boolean;
   subtitulo: string;
   conceptos: ConceptoOpcion[];
+  /**
+   * Habitaciones a las que se puede atribuir el cargo (la primera, con
+   * `idDetalle: null`, es "General de la reserva"). Vacío = sin selector.
+   */
+  opcionesHabitacion: OpcionHabitacionCargo[];
+  /** Habitación elegida (`id_detalle`); null = general de la reserva. */
+  fkDetalleReserva: number | null;
   fkConcepto: string | number;
   cantidad: string;
   precio: string;
@@ -22,6 +30,7 @@ interface CargoManualDialogProps {
   puedeGuardar: boolean;
   error: string | null;
   onConceptoChange: (valor: string | number) => void;
+  onHabitacionChange: (idDetalle: number | null) => void;
   onCantidadChange: (texto: string) => void;
   onPrecioChange: (texto: string) => void;
   onMotivoChange: (texto: string) => void;
@@ -31,12 +40,15 @@ interface CargoManualDialogProps {
 
 /**
  * Free charge reception adds to an open folio: concept, quantity, unit price
- * and a mandatory reason. Presentational: rules live in `useCargoManual`.
+ * and a mandatory reason, optionally attributed to one room of the
+ * reservation. Presentational: rules live in `useCargoManual`.
  */
 export function CargoManualDialog({
   isOpen,
   subtitulo,
   conceptos,
+  opcionesHabitacion,
+  fkDetalleReserva,
   fkConcepto,
   cantidad,
   precio,
@@ -47,6 +59,7 @@ export function CargoManualDialog({
   puedeGuardar,
   error,
   onConceptoChange,
+  onHabitacionChange,
   onCantidadChange,
   onPrecioChange,
   onMotivoChange,
@@ -79,6 +92,25 @@ export function CargoManualDialog({
           <label>Concepto *</label>
           <AutocompleteConceptos conceptos={conceptos} value={fkConcepto} onChange={onConceptoChange} lockOnSelect />
         </div>
+
+        {opcionesHabitacion.length > 0 && (
+          <div className="input-group" style={{ marginBottom: 0 }}>
+            <label htmlFor="cargo-manual-habitacion">Habitación</label>
+            <select
+              id="cargo-manual-habitacion"
+              className="input-field"
+              value={fkDetalleReserva === null ? '' : String(fkDetalleReserva)}
+              onChange={(e) => onHabitacionChange(e.target.value === '' ? null : Number(e.target.value))}
+              disabled={guardando}
+            >
+              {opcionesHabitacion.map((o) => (
+                <option key={o.idDetalle ?? 'general'} value={o.idDetalle === null ? '' : String(o.idDetalle)}>
+                  {o.etiqueta}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: '14px' }}>
           <div className="input-group" style={{ marginBottom: 0, flex: '0 0 110px' }}>

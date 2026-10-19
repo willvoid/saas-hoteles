@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { folioService, type Concepto } from '../services/folioService';
 import { ReservationService } from '../services/reservationService';
 import { formatGs } from '../utils/currency';
+import { esHabitacionValida, type OpcionHabitacionCargo } from '../utils/cargosPorHabitacion';
 
 const MAX_MOTIVO = 200;
 
@@ -22,16 +23,25 @@ export function useCargoManual(params: {
   fkReserva: number | null;
   idUsuario: number | null;
   conceptos: Concepto[];
+  /** Habitaciones elegibles (ver `opcionesHabitacionCargo`); omitido o vacío = cargo general. */
+  opcionesHabitacion?: OpcionHabitacionCargo[];
 }) {
-  const { folioId, fkReserva, idUsuario, conceptos } = params;
+  const { folioId, fkReserva, idUsuario, conceptos, opcionesHabitacion = [] } = params;
 
   const [abierto, setAbierto] = useState(false);
   const [fkConcepto, setFkConcepto] = useState<string | number>('');
+  const [habitacionElegida, setHabitacionElegida] = useState<number | null>(null);
   const [cantidad, setCantidad] = useState('1');
   const [precio, setPrecio] = useState('');
   const [motivo, setMotivo] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Las habitaciones se recargan en vivo: si la elegida deja de estar
+  // asignada mientras el diálogo está abierto, el cargo vuelve a ser general.
+  const fkDetalleReserva = esHabitacionValida(habitacionElegida, opcionesHabitacion) ? habitacionElegida : null;
+  const etiquetaHabitacion =
+    opcionesHabitacion.find((o) => o.idDetalle === fkDetalleReserva && o.idDetalle !== null)?.etiqueta ?? null;
 
   const concepto = conceptos.find((c) => String(c.id_concepto) === String(fkConcepto)) ?? null;
   const cantidadNum = Number.parseInt(cantidad, 10);
@@ -44,6 +54,7 @@ export function useCargoManual(params: {
 
   const abrir = () => {
     setFkConcepto('');
+    setHabitacionElegida(null);
     setCantidad('1');
     setPrecio('');
     setMotivo('');
@@ -63,6 +74,11 @@ export function useCargoManual(params: {
     setError(null);
     const elegido = conceptos.find((c) => String(c.id_concepto) === String(valor));
     if (elegido && Number(elegido.arancel) > 0) setPrecio(String(Math.round(Number(elegido.arancel))));
+  };
+
+  const elegirHabitacion = (idDetalle: number | null) => {
+    setHabitacionElegida(idDetalle);
+    setError(null);
   };
 
   const cambiarCantidad = (texto: string) => setCantidad(texto.replace(/[^\d]/g, '').slice(0, 4));
@@ -85,6 +101,7 @@ export function useCargoManual(params: {
         cantidad: cantidadNum,
         monto_unitario: precioNum,
         fk_usuario: idUsuario,
+        fk_detalle_reserva: fkDetalleReserva,
       });
     } catch (err: unknown) {
       setError(err instanceof Error && err.message ? err.message : 'No se pudo agregar el cargo.');
@@ -99,7 +116,7 @@ export function useCargoManual(params: {
         await ReservationService.addHistorialEntry({
           fk_reserva: fkReserva,
           tipo_movimiento: 'CARGO_MANUAL',
-          descripcion: `Cargo manual en folio #${folioId}: ${concepto.nombre} x${cantidadNum} = ${formatGs(total)}. Motivo: ${motivo.trim()}`,
+          descripcion: `Cargo manual en folio #${folioId}: ${concepto.nombre} x${cantidadNum} = ${formatGs(total)}${etiquetaHabitacion ? ` (${etiquetaHabitacion})` : ''}. Motivo: ${motivo.trim()}`,
           fk_usuario: idUsuario,
         });
       } catch (err) {
@@ -121,6 +138,7 @@ export function useCargoManual(params: {
   return {
     abierto,
     fkConcepto,
+    fkDetalleReserva,
     cantidad,
     precio,
     motivo,
@@ -132,6 +150,7 @@ export function useCargoManual(params: {
     abrir,
     cerrar,
     elegirConcepto,
+    elegirHabitacion,
     cambiarCantidad,
     cambiarPrecio,
     cambiarMotivo,
