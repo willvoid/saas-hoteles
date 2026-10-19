@@ -4,6 +4,7 @@ import {
   getTenant,
   listTenants,
   setTenantEstado,
+  setTenantHoteles,
   setTenantPlan,
 } from '../services/superadminService';
 import type {
@@ -135,9 +136,15 @@ export function useTenantDetail(tenantId: number | null) {
     [mutate, detail],
   );
 
+  const changeHoteles = useCallback(
+    (hoteles: number | null) =>
+      mutate(() => setTenantHoteles(detail!.tenant.id, hoteles), 'Los hoteles contratados fueron actualizados.'),
+    [mutate, detail],
+  );
+
   const clearFeedback = useCallback(() => setFeedback(null), []);
 
-  return { detail, loading, error, busy, feedback, refetch, changeEstado, changePlan, clearFeedback };
+  return { detail, loading, error, busy, feedback, refetch, changeEstado, changePlan, changeHoteles, clearFeedback };
 }
 
 export function useCreateTenant() {

@@ -32,6 +32,7 @@ export interface TenantRow {
   ciclo_facturacion: string | null;
   trial_fin: string | null;
   vigente_hasta: string | null;
+  hoteles_contratados: number | null;
   created_at: string;
   fk_usuario_web: number | null;
 }
@@ -136,6 +137,14 @@ export function setTenantEstado(tenantId: number, estado: TenantEstado) {
 
 export function setTenantPlan(tenantId: number, input: SetPlanInput) {
   return call<SetPlanResult>({ action: 'set_plan', tenant_id: tenantId, ...input });
+}
+
+export function setTenantHoteles(tenantId: number, hotelesContratados: number | null) {
+  return call<{ tenant_id: number; hoteles_contratados: number | null }>({
+    action: 'set_hoteles',
+    tenant_id: tenantId,
+    hoteles_contratados: hotelesContratados,
+  });
 }
 
 export function createTenant(input: CreateTenantInput) {

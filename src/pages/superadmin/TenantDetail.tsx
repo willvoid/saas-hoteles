@@ -33,7 +33,7 @@ const TD: CSSProperties = { padding: '8px 12px', borderTop: '1px solid var(--gla
 export default function TenantDetail() {
   const params = useParams();
   const parsed = /^\d+$/.test(params.tenantId ?? '') ? Number(params.tenantId) : null;
-  const { detail, loading, error, busy, feedback, refetch, changeEstado, changePlan, clearFeedback } =
+  const { detail, loading, error, busy, feedback, refetch, changeEstado, changePlan, changeHoteles, clearFeedback } =
     useTenantDetail(parsed);
 
   const [confirmEstado, setConfirmEstado] = useState(false);
@@ -41,6 +41,9 @@ export default function TenantDetail() {
   const [planConfirm, setPlanConfirm] = useState(false);
   const [draft, setDraft] = useState<PlanDraft>({ plan: 'pro', ciclo: 'mensual', monto: '', referencia: '' });
   const [draftError, setDraftError] = useState<string | null>(null);
+  const [hotelesOpen, setHotelesOpen] = useState(false);
+  const [hotelesText, setHotelesText] = useState('');
+  const [hotelesError, setHotelesError] = useState<string | null>(null);
 
   if (parsed === null) return <Navigate to="/superadmin" replace />;
 
@@ -54,6 +57,27 @@ export default function TenantDetail() {
     const next = suspended ? (tenant.plan === 'trial' ? 'trial' : 'activo') : 'suspendido';
     await changeEstado(next);
     setConfirmEstado(false);
+  };
+
+  const openHotelesDialog = () => {
+    setHotelesText(tenant?.hoteles_contratados != null ? String(tenant.hoteles_contratados) : '');
+    setHotelesError(null);
+    setHotelesOpen(true);
+  };
+
+  // Empty clears the contract override and the plan's own cap applies again.
+  const handleHotelesSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const text = hotelesText.trim();
+    let value: number | null = null;
+    if (text !== '') {
+      if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 1000) {
+        setHotelesError('Ingresá un entero entre 1 y 1000, o dejá vacío para usar el tope del plan.');
+        return;
+      }
+      value = Number(text);
+    }
+    if (await changeHoteles(value)) setHotelesOpen(false);
   };
 
   const buildPlanInput = (): SetPlanInput | null => {
@@ -150,6 +174,9 @@ export default function TenantDetail() {
                 >
                   {suspended ? 'Reactivar hotel' : 'Suspender hotel'}
                 </button>
+                <button type="button" className="btn-ghost" disabled={!manageable || busy} onClick={openHotelesDialog}>
+                  Hoteles contratados
+                </button>
                 <button type="button" className="btn-primary-sm" disabled={!manageable || busy} onClick={openPlanDialog}>
                   Cambiar plan
                 </button>
@@ -172,6 +199,7 @@ export default function TenantDetail() {
               </div>
               {field('Plan', tenant.plan)}
               {field('Ciclo', tenant.ciclo_facturacion)}
+              {field('Hoteles contratados', tenant.hoteles_contratados === null ? 'Según plan' : String(tenant.hoteles_contratados))}
               {field('Fin de prueba', formatDateOnly(tenant.trial_fin))}
               {field('Vigente hasta', formatDateOnly(tenant.vigente_hasta))}
               {field('Creado', formatDateOnly(tenant.created_at))}
@@ -312,6 +340,35 @@ export default function TenantDetail() {
                   </button>
                   <button type="submit" className="btn-primary-sm">
                     Continuar
+                  </button>
+                </div>
+              </form>
+            </Modal>
+
+            <Modal isOpen={hotelesOpen} onClose={() => setHotelesOpen(false)} title="Hoteles contratados">
+              <form onSubmit={handleHotelesSubmit} noValidate>
+                <div className="input-group">
+                  <label htmlFor="sa-hoteles">Cantidad de hoteles</label>
+                  <input
+                    id="sa-hoteles"
+                    className="input-field"
+                    inputMode="numeric"
+                    placeholder="Vacío = tope del plan"
+                    value={hotelesText}
+                    onChange={(e) => setHotelesText(e.target.value)}
+                  />
+                </div>
+                {hotelesError && (
+                  <div className="status-message status-error" role="alert">
+                    {hotelesError}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                  <button type="button" className="btn-ghost" onClick={() => setHotelesOpen(false)}>
+                    Cancelar
+                  </button>
+                  <button type="submit" className="btn-primary-sm" disabled={busy}>
+                    Guardar
                   </button>
                 </div>
               </form>

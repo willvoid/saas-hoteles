@@ -131,6 +131,43 @@ async function setEstado(ctx: Ctx): Promise<Response> {
   return json({ data: { tenant_id: tenantId, estado } });
 }
 
+// Contracted hotel cap for the account (migration 0026). null clears the
+// override and falls back to the plan's own cap.
+async function setHoteles(ctx: Ctx): Promise<Response> {
+  const { admin, body } = ctx;
+  const tenantId = tenantIdOf(body);
+  if (tenantId === null) return fail(400, 'tenant_id inválido.');
+  const hoteles = body.hoteles_contratados;
+  if (hoteles !== null && (typeof hoteles !== 'number' || !Number.isInteger(hoteles) || hoteles < 1 || hoteles > 1000)) {
+    return fail(400, 'La cantidad de hoteles debe ser un entero entre 1 y 1000.');
+  }
+
+  const { data: tenant, error: lookupError } = await admin
+    .from('tenants')
+    .select('id, plan, hoteles_contratados')
+    .eq('id', tenantId)
+    .maybeSingle();
+  if (lookupError) {
+    console.error('superadmin: set_hoteles lookup failed', lookupError.code);
+    return fail(500, 'No se pudo verificar el hotel.');
+  }
+  if (!tenant) return fail(404, 'No existe el hotel.');
+  if (tenant.plan === 'plantilla') return fail(400, 'El hotel plantilla no se puede modificar.');
+
+  const { error } = await admin.from('tenants').update({ hoteles_contratados: hoteles }).eq('id', tenantId);
+  if (error) {
+    console.error('superadmin: set_hoteles update failed', error.code);
+    return fail(500, 'No se pudo guardar la cantidad de hoteles.');
+  }
+
+  const auditFail = await audit(ctx, 'set_hoteles', tenantId, {
+    from: tenant.hoteles_contratados,
+    to: hoteles,
+  });
+  if (auditFail) return auditFail;
+  return json({ data: { tenant_id: tenantId, hoteles_contratados: hoteles } });
+}
+
 async function setPlan(ctx: Ctx): Promise<Response> {
   const { admin, body } = ctx;
   const tenantId = tenantIdOf(body);
@@ -241,6 +278,7 @@ const ACTIONS: Record<string, (ctx: Ctx) => Promise<Response>> = {
   get_tenant: getTenant,
   set_estado: setEstado,
   set_plan: setPlan,
+  set_hoteles: setHoteles,
   create_tenant: createTenant,
   ...makeFinanzasActions(audit),
 };
