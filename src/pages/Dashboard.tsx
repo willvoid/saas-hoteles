@@ -45,6 +45,7 @@ import ManageEstablecimientos from './ManageEstablecimientos';
 import ManageEmpresas from './ManageEmpresas';
 import ManageEdificios from './ManageEdificios';
 import ManagePisos from './ManagePisos';
+import ManageCajas from './ManageCajas';
 import ManageProductos from './ManageProductos';
 import ManageReportes from './ManageReportes';
 import Finanzas from './Finanzas';
@@ -369,6 +370,15 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
             >
               <Wallet className="icon" size={20} />
               <span>Caja</span>
+            </button>
+          )}
+          {canAccessTab(role, 'cajas') && (
+            <button
+              className={`nav-item ${activeTab === 'cajas' ? 'active' : ''}`}
+              onClick={() => navigateTo('cajas')}
+            >
+              <Wallet className="icon" size={20} />
+              <span>Gestión de cajas</span>
             </button>
           )}
           {canAccessTab(role, 'reportes') && (
@@ -943,6 +953,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onSwitchHotel }) 
         {activeTab === 'edificios' && canAccessTab(role, 'edificios') && (
           <div className="module-container">
             <ManageEdificios onBack={() => navigateTo('home')} />
+          </div>
+        )}
+
+        {activeTab === 'cajas' && canAccessTab(role, 'cajas') && (
+          <div className="module-container">
+            <ManageCajas onBack={() => navigateTo('home')} />
           </div>
         )}
 

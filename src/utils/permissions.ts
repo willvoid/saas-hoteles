@@ -9,6 +9,7 @@ export type TabId =
   | 'folios'
   | 'facturacion'
   | 'caja'
+  | 'cajas'
   | 'habitaciones'
   | 'tipos_habitacion'
   | 'tarifas'
@@ -26,7 +27,7 @@ export type Role = 'admin' | 'gerente' | 'recepcionista' | 'limpiador' | 'unknow
 
 const ALL_TABS: TabId[] = [
   'home', 'clientes', 'reservas', 'folios',
-  'facturacion', 'caja',
+  'facturacion', 'caja', 'cajas',
   'habitaciones', 'tipos_habitacion', 'tarifas',
   'estado-limpieza', 'usuarios',
   'establecimientos', 'empresas',
@@ -81,6 +82,7 @@ export function allowedTabs(role: Role): TabId[] {
           tab !== 'empresas' &&
           tab !== 'edificios' &&
           tab !== 'pisos' &&
+          tab !== 'cajas' &&
           tab !== 'reportes' &&
           tab !== 'finanzas'
       );

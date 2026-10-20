@@ -130,3 +130,13 @@ describe('Finanzas', () => {
     expect(canAccessFinanzas('unknown', on)).toBe(false);
   });
 });
+
+describe('cajas tab', () => {
+  it('is available to admin and gerente only', () => {
+    expect(canAccessTab('admin', 'cajas')).toBe(true);
+    expect(canAccessTab('gerente', 'cajas')).toBe(true);
+    expect(canAccessTab('recepcionista', 'cajas')).toBe(false);
+    expect(canAccessTab('unknown', 'cajas')).toBe(false);
+    expect(canAccessTab('limpiador', 'cajas')).toBe(false);
+  });
+});
