@@ -32,11 +32,17 @@ supabase/migrations/
   0021_reportes_finanzas     RPC de reportes de finanzas (fn_rep_*)
   0022_cargos_extra_checkout horarios por establecimiento, recargos de late check-out / early check-in y RPC atomicas
   0023_fecha_paraguay        hoy_py(): la fecha de hoy en Paraguay en lugar de current_date (UTC)
+  0024_platform_admins       super admin de plataforma
+  0025_finanzas_plataforma   finanzas de plataforma
+  0026_planes_v2             planes v2: modulos detallados, hotel adicional y hoteles por contrato
+  0027_planes_modulos        textos de modulos por plan (landing)
   0028_cargos_folio_detalle_reserva  cargos_folio.fk_detalle_reserva: cada cargo del folio puede atribuirse a una habitacion
   0029_alojamiento_por_habitacion    el alojamiento automatico del primer check-in se carga por habitacion
+  0030_cajas_limite_plan     planes.max_cajas, caja.estado, tope por plan, RLS admin/gerente y fn_planes_publicos con max_cajas
 supabase/seed.sql            catalogos minimos (solo desarrollo / respaldo)
 tests/aislamiento.sql        suite de aislamiento entre dos tenants (incluye finanzas)
 tests/planes.sql             suite de planes y suscripciones
+tests/cajas.sql              suite de cajas por plan (tope, baja logica, turno abierto, RLS)
 tests/finanzas.sql           suite del modulo de finanzas (contabilizacion, cierre, reportes)
 tests/registro_publico.sql   suite del alta publica de hoteles
 tests/fecha_paraguay.sql     suite de hoy_py() y de las fechas de suscripcion y tarifas
