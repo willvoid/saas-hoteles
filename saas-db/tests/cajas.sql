@@ -175,6 +175,14 @@ begin
 
   perform t.actuar(t.g('rec'), t.g('pro')::bigint);
   perform t.ok(t.cuenta('select count(*) from public.caja') = 3, 'la recepcionista lee las cajas de su hotel');
+  perform t.volver();
+
+  -- Libera un cupo: el trigger de tope corre antes que RLS, y con el hotel en
+  -- el tope el insert fallaria por 23514 y no por permisos.
+  -- (la transaccion se revierte al final, asi que el tope vuelve solo).
+  update public.planes set max_cajas = 4 where codigo = 'pro';
+
+  perform t.actuar(t.g('rec'), t.g('pro')::bigint);
   perform t.falla(format('insert into public.caja (nro_caja, fk_establecimientos) values (50, %s)', t.g('pro_estab')),
                   '42501', 'la recepcionista no crea cajas');
   perform t.filas('update public.caja set descripcion_caja = ''x''', 0, 'la recepcionista no edita cajas');
@@ -211,6 +219,9 @@ end $$;
 -- ─── Aislamiento entre hoteles ───────────────────────────────────────────────
 do $$
 begin
+  -- Cupo libre en Basico: el tope corre antes que RLS (rollback al final).
+  update public.planes set max_cajas = 2 where codigo = 'basico';
+
   perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
   perform t.ok(t.cuenta(format('select count(*) from public.caja where tenant_id <> %s', t.g('pro'))) = 0,
                'el admin de Pro no ve cajas de otros hoteles');
