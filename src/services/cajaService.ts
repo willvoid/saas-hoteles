@@ -1,12 +1,27 @@
 import { supabase } from './supabaseClient';
-import type { Turno, Caja } from '../types/factura';
+import type { Turno, Caja, EstadoCaja } from '../types/factura';
 
 // Código de Postgres para violación de índice/constraint único.
 const PG_UNIQUE_VIOLATION = '23505';
+// Código de Postgres para check_violation (tope del plan, baja con turno abierto).
+const PG_CHECK_VIOLATION = '23514';
 
 export interface CajaConEstado extends Caja {
   /** true si esa caja ya tiene un turno abierto (de cualquier usuario). */
   turnoAbierto: boolean;
+}
+
+export interface LimiteCajas {
+  /** Todas las cajas del hotel, activas o no (así cuenta el tope). */
+  total: number;
+  /** Tope del plan; null = ilimitado. */
+  max: number | null;
+}
+
+export interface NuevaCaja {
+  nro_caja?: number;
+  descripcion_caja: string;
+  fk_establecimientos: number;
 }
 
 export interface TurnoAbierto {
@@ -46,7 +61,7 @@ export const cajaService = {
   // desactualizada por una apertura concurrente, `abrirTurno` no lo permite.
   async getCajasConEstado(): Promise<CajaConEstado[]> {
     const [{ data: cajas, error: cajasError }, { data: turnosAbiertos, error: turnosError }] = await Promise.all([
-      supabase.from('caja').select('*').order('nro_caja'),
+      supabase.from('caja').select('*').eq('estado', 'Activo').order('nro_caja'),
       supabase.from('apertura_cierre_caja').select('fk_caja').is('cierre', null),
     ]);
 
@@ -54,7 +69,88 @@ export const cajaService = {
     if (turnosError) throw turnosError;
 
     const ocupadas = new Set((turnosAbiertos ?? []).map((t) => t.fk_caja));
-    return (cajas ?? []).map((c) => ({ ...c, turnoAbierto: ocupadas.has(c.id_caja) }));
+    return ((cajas ?? []) as Caja[]).map((c) => ({ ...c, turnoAbierto: ocupadas.has(c.id_caja) }));
+  },
+
+  // Todas las cajas, incluidas las inactivas, para la pantalla de administración.
+  async getCajas(): Promise<Caja[]> {
+    const { data, error } = await supabase.from('caja').select('*').order('nro_caja');
+    if (error) throw mapCajaError(error);
+    return (data ?? []) as Caja[];
+  },
+
+  // Crea una caja. Sin `nro_caja` toma max + 1 dentro del establecimiento.
+  // El tope del plan lo aplica un trigger (23514), no el cliente.
+  async createCaja(params: NuevaCaja): Promise<Caja> {
+    let nro = params.nro_caja;
+    if (nro === undefined) {
+      const { data: ultimas, error: nroError } = await supabase
+        .from('caja')
+        .select('nro_caja')
+        .eq('fk_establecimientos', params.fk_establecimientos)
+        .order('nro_caja', { ascending: false })
+        .limit(1);
+      if (nroError) throw mapCajaError(nroError);
+      nro = ((ultimas as { nro_caja: number }[] | null)?.[0]?.nro_caja ?? 0) + 1;
+    }
+
+    const { data, error } = await supabase
+      .from('caja')
+      .insert({
+        nro_caja: nro,
+        descripcion_caja: params.descripcion_caja,
+        fk_establecimientos: params.fk_establecimientos,
+      })
+      .select()
+      .single();
+    if (error) throw mapCajaError(error);
+    return data as Caja;
+  },
+
+  async updateCaja(id: number, params: { descripcion_caja: string }): Promise<Caja> {
+    const { data, error } = await supabase
+      .from('caja')
+      .update({ descripcion_caja: params.descripcion_caja })
+      .eq('id_caja', id)
+      .select()
+      .single();
+    if (error) throw mapCajaError(error);
+    return data as Caja;
+  },
+
+  // Baja/alta lógica. Desactivar con turno abierto lo rechaza un trigger (23514).
+  async setEstadoCaja(id: number, estado: EstadoCaja): Promise<Caja> {
+    const { data, error } = await supabase
+      .from('caja')
+      .update({ estado })
+      .eq('id_caja', id)
+      .select()
+      .single();
+    if (error) throw mapCajaError(error);
+    return data as Caja;
+  },
+
+  // Cajas del hotel (RLS filtra por tenant) frente al tope de su plan.
+  // `tenants` y `planes` son legibles para el usuario autenticado.
+  async getLimiteCajas(): Promise<LimiteCajas> {
+    const [{ count, error: countError }, { data: tenant, error: tenantError }] = await Promise.all([
+      supabase.from('caja').select('id_caja', { count: 'exact', head: true }),
+      supabase.from('tenants').select('plan').maybeSingle(),
+    ]);
+    if (countError) throw countError;
+    if (tenantError) throw tenantError;
+
+    let max: number | null = null;
+    if (tenant?.plan) {
+      const { data: plan, error: planError } = await supabase
+        .from('planes')
+        .select('max_cajas')
+        .eq('codigo', tenant.plan)
+        .maybeSingle();
+      if (planError) throw planError;
+      max = plan?.max_cajas ?? null;
+    }
+    return { total: count ?? 0, max };
   },
 
   // Abre un turno. monto_final es NOT NULL en el esquema, así que se guarda un
@@ -136,6 +232,15 @@ export const cajaService = {
     return data;
   },
 };
+
+// 23514 viene de los triggers de la migración 0030 con mensaje ya en español
+// (tope del plan / turno abierto); se conserva ese texto y se evita el error crudo.
+function mapCajaError(error: { message: string; code?: string }): Error {
+  if (error.code === PG_CHECK_VIOLATION) {
+    return new Error(error.message || 'Superaste el límite de cajas de tu plan o la caja tiene un turno abierto.');
+  }
+  return error as unknown as Error;
+}
 
 interface EmbedRow {
   nombre?: string;

@@ -239,6 +239,7 @@ export type Database = {
         Row: {
           created_at: string
           descripcion_caja: string | null
+          estado: string
           fk_establecimientos: number
           id_caja: number
           nro_caja: number
@@ -246,6 +247,7 @@ export type Database = {
         Insert: {
           created_at?: string
           descripcion_caja?: string | null
+          estado?: string
           fk_establecimientos: number
           id_caja?: never
           nro_caja: number
@@ -253,6 +255,7 @@ export type Database = {
         Update: {
           created_at?: string
           descripcion_caja?: string | null
+          estado?: string
           fk_establecimientos?: number
           id_caja?: never
           nro_caja?: number
@@ -1962,6 +1965,7 @@ export type Database = {
       planes: {
         Row: {
           codigo: string
+          max_cajas: number | null
           max_habitaciones: number | null
           max_hoteles: number | null
           max_usuarios: number | null

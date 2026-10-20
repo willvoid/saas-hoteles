@@ -12,7 +12,8 @@ export type FacturaInsert = Database['public']['Tables']['facturas']['Insert'] &
 export type DetalleFactura = Database['public']['Tables']['detalle_factura']['Row'];
 export type DetalleFacturaInsert = Database['public']['Tables']['detalle_factura']['Insert'];
 export type Turno = Database['public']['Tables']['apertura_cierre_caja']['Row'];
-export type Caja = Database['public']['Tables']['caja']['Row'];
+export type EstadoCaja = 'Activo' | 'Inactivo';
+export type Caja = Omit<Database['public']['Tables']['caja']['Row'], 'estado'> & { estado: EstadoCaja };
 
 // ─── Máquina de estados de la factura ─────────────────────────────────────────
 /** Conjunto canónico de estados de una factura (fuente de verdad). */
