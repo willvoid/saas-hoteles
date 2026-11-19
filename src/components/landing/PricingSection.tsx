@@ -98,7 +98,7 @@ export default function PricingSection({ plans, loading, error, onRetry }: Prici
   return (
     <section id="planes" className="home-section" aria-labelledby="home-plans-title">
       <h2 id="home-plans-title" className="home-section-title">
-        Planes simples, sin sorpresas
+        Planes simples, en guaraníes y sin sorpresas
       </h2>
       <p className="home-section-lead">
         {TRIAL_DAYS} días de prueba gratis, sin tarjeta. Después elegís el plan que mejor se ajuste a tu hotel.
@@ -124,6 +124,7 @@ export default function PricingSection({ plans, loading, error, onRetry }: Prici
           </button>
         </div>
       )}
+      {hasAnnual && <p className="home-note home-annual-note">Pagá anual y llevate 2 meses gratis.</p>}
 
       {loading && (
         <p className="home-state" role="status">

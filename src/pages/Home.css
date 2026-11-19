@@ -257,6 +257,23 @@
   justify-content: center;
 }
 
+.home-trust {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 20px;
+  margin-top: 24px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.home-trust li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Pricing */
 .home-toggle {
   display: flex;
@@ -410,6 +427,10 @@
   text-align: center;
   font-size: 14px;
   color: var(--text-secondary);
+}
+
+.home-annual-note {
+  margin: -16px 0 24px;
 }
 
 .home-state {

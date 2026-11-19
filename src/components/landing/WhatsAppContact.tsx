@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { buildWhatsAppUrl } from '../../utils/landing';
-import { REGISTER_PATH } from './content';
+import { REGISTER_PATH, TRIAL_DAYS } from './content';
 
 const WHATSAPP_MESSAGE = 'Hola, quiero más información sobre el sistema de gestión hotelera.';
 
@@ -15,7 +15,7 @@ export default function WhatsAppContact() {
       </h2>
       <p className="home-section-lead">
         {whatsappUrl
-          ? 'Escribinos y te ayudamos a elegir el plan ideal para tu hotel.'
+          ? 'Escribinos por WhatsApp y te mostramos el sistema funcionando con un hotel como el tuyo.'
           : 'Creá tu cuenta de prueba y empezá a explorar el sistema.'}
       </p>
       <div className="home-hero-actions">
@@ -31,7 +31,7 @@ export default function WhatsAppContact() {
           </a>
         )}
         <Link to={REGISTER_PATH} className="home-btn home-btn-primary home-btn-lg">
-          Probar gratis
+          Probar gratis {TRIAL_DAYS} días
         </Link>
       </div>
     </section>
