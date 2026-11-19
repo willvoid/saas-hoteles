@@ -21,6 +21,7 @@ npm-debug.log*
 
 # Supabase CLI local state (project ref, pooler URL, versions)
 saas-db/supabase/.temp/
+supabase/.temp/
 
 # Editor / OS
 .vscode/*
