@@ -39,6 +39,7 @@ supabase/migrations/
   0028_cargos_folio_detalle_reserva  cargos_folio.fk_detalle_reserva: cada cargo del folio puede atribuirse a una habitacion
   0029_alojamiento_por_habitacion    el alojamiento automatico del primer check-in se carga por habitacion
   0030_cajas_limite_plan     planes.max_cajas, caja.estado, tope por plan, RLS admin/gerente y fn_planes_publicos con max_cajas
+  0031_planes_precios_landing  precios Basico/Pro, nombre con tilde y textos de modulos (SIFEN) de la nueva landing
 supabase/seed.sql            catalogos minimos (solo desarrollo / respaldo)
 tests/aislamiento.sql        suite de aislamiento entre dos tenants (incluye finanzas)
 tests/planes.sql             suite de planes y suscripciones

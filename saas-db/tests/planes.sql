@@ -115,7 +115,7 @@ begin
   perform t.ok((select vigente_hasta from public.tenants where id = t.g('basico')::bigint) > public.hoy_py()
                and (select estado from public.tenants where id = t.g('basico')::bigint) = 'activo',
                'fn_activar_plan deja el hotel activo con vigencia futura');
-  perform t.ok((select monto from public.pagos_suscripcion where tenant_id = t.g('basico')::bigint) = 150000,
+  perform t.ok((select monto from public.pagos_suscripcion where tenant_id = t.g('basico')::bigint) = 250000,
                'el pago toma el precio de lista del plan');
   perform t.ok((select count(*) from public.planes where visible) = 3, 'se ofrecen tres planes');
   perform t.ok(public.fn_limite(t.g('pro')::bigint, 'habitaciones') = 30
@@ -187,7 +187,7 @@ begin
   perform t.filas('delete from public.tipo_habitacion', 0, 'el trial vencido no borra');
   perform t.volver();
 
-  perform public.fn_activar_plan(t.g('pro')::bigint, 'pro', 'anual', 3000000, 'renovacion');
+  perform public.fn_activar_plan(t.g('pro')::bigint, 'pro', 'anual', 3900000, 'renovacion');
   perform t.ok((select vigente_hasta from public.tenants where id = t.g('pro')::bigint) >= public.hoy_py() + 365,
                'el ciclo anual extiende 12 meses');
   perform t.actuar(t.g('pro_admin'), t.g('pro')::bigint);
